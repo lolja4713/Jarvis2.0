@@ -1,0 +1,24 @@
+{
+  "name": "jarvis-2-desktop",
+  "version": "1.0.0",
+  "description": "Asistente de escritorio personalizable en español",
+  "main": "src/main.js",
+  "author": "Jarvis 2.0",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.jarvis.desktop",
+    "productName": "Jarvis 2.0",
+    "directories": { "output": "release" },
+    "files": ["src/**/*", "package.json"],
+    "win": { "target": "nsis", "artifactName": "Jarvis-2.0-Setup-${version}.${ext}" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true }
+  }
+}
