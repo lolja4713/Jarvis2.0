@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('jarvis', {
   getData: () => ipcRenderer.invoke('settings:get'), saveSettings: value => ipcRenderer.invoke('settings:save', value),
+  saveAiKey: key => ipcRenderer.invoke('ai:save-key', key), removeAiKey: () => ipcRenderer.invoke('ai:remove-key'), openAiKeyPage: () => ipcRenderer.invoke('ai:open-key-page'), saveAiConfig: config => ipcRenderer.invoke('ai:save-config', config), sendAiMessage: prompt => ipcRenderer.invoke('ai:chat', prompt), clearAiChat: () => ipcRenderer.invoke('ai:clear-chat'), generateAiImage: options => ipcRenderer.invoke('ai:generate-image', options),
   recordUsage: label => ipcRenderer.invoke('usage:record', label), searchFiles: q => ipcRenderer.invoke('files:search', q), openFile: p => ipcRenderer.invoke('files:open', p),
   openApp: name => ipcRenderer.invoke('apps:open', name), listApps: () => ipcRenderer.invoke('apps:list'), createDocument: input => ipcRenderer.invoke('documents:create', input), backup: repo => ipcRenderer.invoke('github:backup', repo),
   openImage: () => ipcRenderer.invoke('images:open'), saveImage: dataUrl => ipcRenderer.invoke('images:save', dataUrl),

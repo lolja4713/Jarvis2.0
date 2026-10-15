@@ -15,6 +15,9 @@ Asistente de escritorio para Windows, en español, creado con Electron.
 - Comandos de voz encadenados con “y luego”, por ejemplo abrir una app y después buscar un archivo.
 - Panel de sistema con uso aproximado de CPU y memoria, captura de pantalla, y apagado/reinicio con confirmación y cuenta regresiva cancelable.
 - Búsquedas web y traducción abren el navegador; no son respuestas de IA integradas.
+- Chat inteligente conectado a la Responses API de OpenAI: conversación con contexto reciente, ayuda de redacción, resúmenes, idiomas y programación; modelo y tono configurables.
+- Generación de imágenes nuevas y edición del lienzo actual mediante la herramienta de imagen de OpenAI; incluye también un editor manual local.
+- Clave API cifrada mediante `safeStorage` de Electron en el equipo local; el historial de conversación permanece local y se puede borrar.
 - Registro local de actividad para mostrar patrones de uso. El aprendizaje de hábitos es descriptivo por ahora; todavía no ejecuta aplicaciones de forma automática.
 - Descargar una copia local de un repositorio público de GitHub. El envío de cambios al repositorio requiere configurar Git y credenciales en el equipo.
 - Generar un instalador de Windows NSIS.
@@ -39,7 +42,7 @@ npm.cmd run dist
 
 El instalador aparecerá en `release/`.
 
-Instalador generado para Windows x64: [`Jarvis-2.0-Setup-1.0.2.exe`](release/Jarvis-2.0-Setup-1.0.2.exe).
+Instalador generado para Windows x64: [`Jarvis-2.0-Setup-1.0.4.exe`](release/Jarvis-2.0-Setup-1.0.4.exe).
 
 Al iniciar, Jarvis muestra una pantalla animada de carga y, si el saludo y la voz están activados, dice: «Hola, estoy listo para ayudarte».
 
@@ -49,11 +52,11 @@ En Personalización, pega la URL HTTPS de un repositorio GitHub. Jarvis descarga
 
 ## Privacidad y límites
 
-El historial y las preferencias se guardan en el directorio local de datos de la app; la búsqueda recorre carpetas personales localmente. No se incluye un modelo de IA, ejecución de comandos arbitrarios, instalación de aplicaciones ni automatización basada en la hora: las acciones actuales son explícitas y limitadas.
+El historial y las preferencias se guardan en el directorio local de datos de la app; la búsqueda recorre carpetas personales localmente. El chat y la generación/edición de imágenes requieren una clave API de OpenAI y conexión a Internet. Los mensajes y hasta seis turnos recientes de contexto se envían a OpenAI para obtener la respuesta; para editar, también se envía el lienzo actual. El uso de API puede tener costo según el modelo, imágenes y cuenta. Jarvis no entrega comandos arbitrarios al modelo ni ejecuta directamente sus respuestas en Windows.
 
 ## Estado de la lista de capacidades
 
-Esta versión implementa una base de escritorio, no las 100 capacidades completas. Están disponibles de forma básica: reconocimiento de voz bajo demanda (1), lectura de respuestas mediante la voz del sistema (2), preferencias visuales (13, parcial), comandos encadenados sencillos (7 y 8, parcial), búsqueda de archivos (23), documentos TXT/Markdown (24), métricas CPU/RAM (29, aproximadas), búsqueda web externa (31), abrir páginas vía navegador (37, indirecto), captura de pantalla (22), apagado/reinicio confirmados (17) y clonación GitHub (63, solo descarga).
+Esta versión implementa una base de escritorio, no las 100 capacidades completas. Están disponibles de forma básica: chat de IA por Responses API, generación/edición de imágenes por IA, lectura de respuestas mediante la voz del sistema (2), preferencias visuales (13, parcial), comandos encadenados sencillos (7 y 8, parcial), búsqueda de archivos (23), documentos TXT/Markdown (24), métricas CPU/RAM (29, aproximadas), búsqueda web externa (31), abrir páginas vía navegador (37, indirecto), captura de pantalla (22), apagado/reinicio confirmados (17) y clonación GitHub (63, solo descarga).
 
 La conversación general y respuestas de conocimiento requieren integrar y configurar un proveedor de IA. El wake word (15), reconocimiento de personas/emociones (4 y 12), correo/calendario (33–35 y 40), análisis de seguridad, cámaras, domótica, robots/drones y agentes continuos necesitan servicios, credenciales, hardware y permisos que aún no están conectados. El instalador no debe presentarse como si esas funciones ya estuvieran disponibles.
 

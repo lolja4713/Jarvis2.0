@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog, desktopCapturer } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, desktopCapturer, safeStorage, net } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -15,6 +15,7 @@ function readData() {
   catch { return { settings: {}, usage: {}, favorites: [], history: [] }; }
 }
 function writeData(value) { fs.mkdirSync(userDir, { recursive: true }); fs.writeFileSync(dataFile, JSON.stringify(value, null, 2), 'utf8'); }
+function publicData(d) { return { settings: d.settings || {}, usage: d.usage || {}, favorites: d.favorites || [], history: d.history || [], ai: { configured: Boolean(d.aiKeyEncrypted), messages: d.aiMessages || [] } }; }
 
 function createWindow() {
   win = new BrowserWindow({ width: 1200, height: 800, minWidth: 900, minHeight: 620, backgroundColor: '#080b12', title: 'Jarvis 2.0', webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
@@ -23,9 +24,55 @@ function createWindow() {
 app.whenReady().then(() => { createWindow(); app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); }); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
-ipcMain.handle('settings:get', () => readData());
+ipcMain.handle('settings:get', () => publicData(readData()));
 ipcMain.handle('settings:save', (_e, value) => { const d = readData(); d.settings = { ...d.settings, ...value }; writeData(d); return d.settings; });
-ipcMain.handle('usage:record', (_e, label) => { const d = readData(); const key = String(label).trim().toLowerCase(); if (key) d.usage[key] = (d.usage[key] || 0) + 1; d.history.unshift({ label: String(label), at: new Date().toISOString() }); d.history = d.history.slice(0, 40); writeData(d); return d; });
+ipcMain.handle('usage:record', (_e, label) => { const d = readData(); const key = String(label).trim().toLowerCase(); if (key) d.usage[key] = (d.usage[key] || 0) + 1; d.history.unshift({ label: String(label), at: new Date().toISOString() }); d.history = d.history.slice(0, 40); writeData(d); return publicData(d); });
+ipcMain.handle('ai:save-key', (_e, key) => {
+  const value = String(key || '').trim(); if (!value || value.length > 300) return { ok: false, message: 'Pega una clave API válida.' };
+  if (!safeStorage.isEncryptionAvailable()) return { ok: false, message: 'El cifrado seguro de Windows no está disponible.' };
+  const d = readData(); d.aiKeyEncrypted = safeStorage.encryptString(value).toString('base64'); writeData(d); return { ok: true, message: 'Clave guardada cifrada en este equipo.' };
+});
+ipcMain.handle('ai:remove-key', () => { const d = readData(); delete d.aiKeyEncrypted; writeData(d); return { ok: true }; });
+ipcMain.handle('ai:open-key-page', () => shell.openExternal('https://platform.openai.com/api-keys'));
+ipcMain.handle('ai:save-config', (_e, config) => { const d = readData(); const models = ['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra']; d.settings = { ...d.settings, aiModel: models.includes(config?.model) ? config.model : 'gpt-6-luna', personality: ['amable', 'profesional', 'divertida'].includes(config?.personality) ? config.personality : 'amable' }; writeData(d); return { ...d.settings }; });
+ipcMain.handle('ai:clear-chat', () => { const d = readData(); d.aiMessages = []; writeData(d); return []; });
+ipcMain.handle('ai:chat', async (_e, prompt) => {
+  const text = String(prompt || '').trim().slice(0, 6000); if (!text) return { ok: false, message: 'Escribe una pregunta o instrucción.' };
+  const d = readData(); if (!d.aiKeyEncrypted) return { ok: false, message: 'Conecta tu clave API de OpenAI en el panel del asistente IA.' };
+  if (!safeStorage.isEncryptionAvailable()) return { ok: false, message: 'El cifrado seguro no está disponible en este equipo.' };
+  const models = ['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra']; const model = models.includes(d.settings.aiModel) ? d.settings.aiModel : 'gpt-6-luna';
+  const personalities = { amable: 'Responde de forma amable, natural y clara.', profesional: 'Responde de forma profesional, directa y ordenada.', divertida: 'Responde con calidez y humor ligero, sin distraerte de la tarea.' };
+  const history = Array.isArray(d.aiMessages) ? d.aiMessages.slice(-12).filter(m => ['user', 'assistant'].includes(m.role) && typeof m.content === 'string').map(m => ({ role: m.role, content: m.content.slice(0, 6000) })) : [];
+  let apiKey; try { apiKey = safeStorage.decryptString(Buffer.from(d.aiKeyEncrypted, 'base64')); } catch { return { ok: false, message: 'No pude descifrar la clave. Elimínala y vuelve a guardarla.' }; }
+  let response;
+  try {
+    response = await net.fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, instructions: `Eres Jarvis 2.0, un asistente personal en español. ${personalities[d.settings.personality] || personalities.amable} Responde en el idioma del usuario. No afirmes haber ejecutado acciones en su computadora: en este chat solo puedes conversar y generar texto.`, input: [...history, { role: 'user', content: text }], max_output_tokens: 1200, store: false }), signal: AbortSignal.timeout(90000) });
+  } catch { return { ok: false, message: 'No pude conectar con OpenAI. Revisa tu conexión e inténtalo otra vez.' }; }
+  if (!response.ok) { const errors = { 401: 'La clave API no es válida.', 403: 'La cuenta no tiene acceso a este modelo o API.', 429: 'Se alcanzó el límite o saldo disponible de la API.' }; return { ok: false, message: errors[response.status] || `OpenAI respondió con error ${response.status}.` }; }
+  let result; try { result = await response.json(); } catch { return { ok: false, message: 'La respuesta de OpenAI no se pudo leer.' }; }
+  const answer = (result.output || []).filter(x => x.type === 'message').flatMap(x => x.content || []).filter(x => x.type === 'output_text').map(x => x.text).join('\n').trim();
+  if (!answer) return { ok: false, message: 'El modelo no devolvió texto esta vez.' };
+  d.aiMessages = [...history, { role: 'user', content: text }, { role: 'assistant', content: answer }].slice(-40); writeData(d); return { ok: true, answer, messages: d.aiMessages };
+});
+ipcMain.handle('ai:generate-image', async (_e, options) => {
+  const prompt = String(options?.prompt || '').trim().slice(0, 4000); const mode = options?.mode === 'edit' ? 'edit' : 'generate';
+  const imageData = options?.imageDataUrl;
+  if (!prompt) return { ok: false, message: 'Describe la imagen o el cambio que quieres.' };
+  if (mode === 'edit' && (typeof imageData !== 'string' || !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(imageData) || imageData.length > 16 * 1024 * 1024)) return { ok: false, message: 'El lienzo debe ser una imagen PNG menor de 12 MB.' };
+  const d = readData(); if (!d.aiKeyEncrypted) return { ok: false, message: 'Configura tu clave API de OpenAI en Asistente IA para generar imágenes.' };
+  if (!safeStorage.isEncryptionAvailable()) return { ok: false, message: 'El cifrado seguro no está disponible en este equipo.' };
+  let key; try { key = safeStorage.decryptString(Buffer.from(d.aiKeyEncrypted, 'base64')); } catch { return { ok: false, message: 'No pude descifrar la clave API guardada.' }; }
+  const model = ['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra'].includes(d.settings.aiModel) ? d.settings.aiModel : 'gpt-6-luna';
+  const inputContent = [{ type: 'input_text', text: prompt }]; if (mode === 'edit') inputContent.push({ type: 'input_image', image_url: imageData });
+  let response;
+  try { response = await net.fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'gpt-6-astra', reasoning: { effort: 'low' }, instructions: mode === 'edit' ? 'Edita la imagen de referencia de acuerdo con la solicitud. Mantén los elementos no mencionados.' : 'Genera una imagen que represente la solicitud.', input: [{ role: 'user', content: inputContent }], tools: [{ type: 'image_generation', model: options?.quality === 'precise' ? 'gpt-image-2.5-sunburst' : 'gpt-image-2.5-flare', action: mode, size: 'auto', quality: 'medium' }], store: false }), signal: AbortSignal.timeout(180000) }); }
+  catch { return { ok: false, message: 'No pude conectar para generar la imagen. Revisa internet e inténtalo de nuevo.' }; }
+  if (!response.ok) { const errors = { 401: 'La clave API no es válida.', 403: 'La cuenta no tiene acceso a esta función.', 429: 'Se alcanzó el límite o saldo disponible de la API.' }; return { ok: false, message: errors[response.status] || `OpenAI respondió con error ${response.status}.` }; }
+  let result; try { result = await response.json(); } catch { return { ok: false, message: 'No se pudo leer la respuesta de generación.' }; }
+  const image = (result.output || []).find(x => x.type === 'image_generation_call' && typeof x.result === 'string')?.result;
+  if (!image || image.length > 45 * 1024 * 1024) return { ok: false, message: 'No llegó una imagen válida en la respuesta.' };
+  return { ok: true, dataUrl: `data:image/png;base64,${image}` };
+});
 ipcMain.handle('files:search', async (_e, query) => {
   const needle = String(query || '').trim().toLowerCase(); if (!needle) return [];
   const found = []; const roots = [...new Set(allowedFolders)];
