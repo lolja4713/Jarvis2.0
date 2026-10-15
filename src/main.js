@@ -210,16 +210,31 @@ function imageAiError(error) {
   return 'ComfyUI no está disponible. Inicia ComfyUI en esta PC para generar imágenes localmente.';
 }
 async function imageAiModels() {
-  const response = await net.fetch(`${imageAiUrl}/object_info/CheckpointLoaderSimple`, { signal: AbortSignal.timeout(5000) });
-  if (!response.ok) throw new Error('No se pudo leer la lista de modelos.');
-  const info = await response.json();
-  const choices = info?.CheckpointLoaderSimple?.input?.required?.ckpt_name?.[0];
-  return Array.isArray(choices) ? choices.filter(x => typeof x === 'string').slice(0, 100) : [];
+  async function nodeInfo(node) {
+    const response = await net.fetch(`${imageAiUrl}/object_info/${node}`, { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) return null;
+    return response.json();
+  }
+  const [checkpointInfo, unetInfo, clipInfo, vaeInfo] = await Promise.all(['CheckpointLoaderSimple', 'UNETLoader', 'CLIPLoader', 'VAELoader'].map(nodeInfo));
+  const models = [];
+  const checkpoints = checkpointInfo?.CheckpointLoaderSimple?.input?.required?.ckpt_name?.[0];
+  if (Array.isArray(checkpoints)) models.push(...checkpoints.filter(name => typeof name === 'string').slice(0, 100).map(name => ({ id: `checkpoint:${name}`, label: name, kind: 'checkpoint', checkpoint: name })));
+  const unets = unetInfo?.UNETLoader?.input?.required?.unet_name?.[0] || [];
+  const clips = clipInfo?.CLIPLoader?.input?.required?.clip_name?.[0] || [];
+  const clipTypes = clipInfo?.CLIPLoader?.input?.required?.type?.[0] || [];
+  const vaes = vaeInfo?.VAELoader?.input?.required?.vae_name?.[0] || [];
+  const unet = unets.find(name => /^z_image_turbo.*\.safetensors$/i.test(name));
+  const clip = clips.find(name => /^qwen_3_4b.*\.safetensors$/i.test(name));
+  if (unet && clip && clipTypes.includes('lumina2') && vaes.includes('taesd')) models.push({ id: 'z-image-turbo', label: 'Z Image Turbo · Qwen 3 4B (alto consumo de memoria)', kind: 'zimage', unet, clip, vae: 'taesd' });
+  return models;
 }
 async function imageAiStatus() {
   try {
     const models = await imageAiModels();
-    return { ok: true, models, message: models.length ? 'IA de imágenes local lista. Las imágenes se procesan en esta PC.' : 'ComfyUI está iniciado, pero falta un modelo de imagen compatible.' };
+    const zImageReady = models.some(model => model.kind === 'zimage');
+    const checkpointCount = models.filter(model => model.kind === 'checkpoint').length;
+    const message = !models.length ? 'ComfyUI está iniciado, pero no encuentra modelos compatibles.' : zImageReady ? `IA local lista: Z Image Turbo${checkpointCount ? ` y ${checkpointCount} checkpoint(s)` : ''}.` : `IA local lista: ${checkpointCount} checkpoint(s).`;
+    return { ok: true, models, message };
   } catch { return { ok: false, models: [], message: imageAiError() }; }
 }
 function validComfyPortableRoot(root) {
@@ -282,14 +297,33 @@ async function runImageAi({ prompt, model, width, height, steps, inputImage, den
   try {
     const models = await imageAiModels();
     if (!models.length) return { ok: false, message: 'ComfyUI está iniciado, pero no encuentra modelos de imagen compatibles.' };
-    const selectedModel = models.includes(model) ? model : models[0];
+    const selectedModel = models.find(item => item.id === model) || models[0];
     const w = Math.max(512, Math.min(1024, Math.round((Number(width) || 768) / 64) * 64));
     const h = Math.max(512, Math.min(1024, Math.round((Number(height) || 768) / 64) * 64));
     const n = Math.max(10, Math.min(40, Math.round(Number(steps) || 20)));
     let source = null;
     if (inputImage) source = await imageAiUpload(inputImage);
-    const workflow = {
-      '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: selectedModel } },
+    let workflow;
+    if (selectedModel.kind === 'zimage') {
+      const zSteps = Math.max(4, Math.min(8, Math.round(Number(steps) || 8)));
+      workflow = {
+        '1': { class_type: 'UNETLoader', inputs: { unet_name: selectedModel.unet, weight_dtype: 'fp8_e4m3fn' } },
+        '2': { class_type: 'CLIPLoader', inputs: { clip_name: selectedModel.clip, type: 'lumina2' } },
+        '3': { class_type: 'ModelSamplingAuraFlow', inputs: { model: ['1', 0], shift: 3 } },
+        '4': { class_type: 'CLIPTextEncode', inputs: { text, clip: ['2', 0] } },
+        '5': { class_type: 'CLIPTextEncode', inputs: { text: 'low quality, blurry, distorted, artifacts', clip: ['2', 0] } },
+        '6': source ? { class_type: 'LoadImage', inputs: { image: source.name } } : { class_type: 'EmptySD3LatentImage', inputs: { width: w, height: h, batch_size: 1 } },
+        '7': source ? { class_type: 'ImageScale', inputs: { image: ['6', 0], upscale_method: 'lanczos', width: w, height: h, crop: 'center' } } : null,
+        '8': { class_type: 'VAELoader', inputs: { vae_name: selectedModel.vae } },
+        '9': source ? { class_type: 'VAEEncode', inputs: { pixels: ['7', 0], vae: ['8', 0] } } : null,
+        '10': { class_type: 'KSampler', inputs: { seed: Math.floor(Math.random() * 2147483647), steps: zSteps, cfg: 1, sampler_name: 'res_multistep', scheduler: 'simple', denoise: source ? Math.max(0.35, Math.min(0.85, Number(denoise) || 0.65)) : 1, model: ['3', 0], positive: ['4', 0], negative: ['5', 0], latent_image: source ? ['9', 0] : ['6', 0] } },
+        '11': { class_type: 'VAEDecode', inputs: { samples: ['10', 0], vae: ['8', 0] } },
+        '12': { class_type: 'SaveImage', inputs: { filename_prefix: 'Jarvis-ZImage', images: ['11', 0] } }
+      };
+      if (!source) { delete workflow['7']; delete workflow['9']; }
+    } else {
+      workflow = {
+      '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: selectedModel.checkpoint } },
       '2': { class_type: 'CLIPTextEncode', inputs: { text, clip: ['1', 1] } },
       '3': { class_type: 'CLIPTextEncode', inputs: { text: 'low quality, blurry, distorted, artifacts', clip: ['1', 1] } },
       '4': source
@@ -304,8 +338,9 @@ async function runImageAi({ prompt, model, width, height, steps, inputImage, den
       '7': { class_type: 'KSampler', inputs: { seed: Math.floor(Math.random() * 2147483647), steps: n, cfg: 7, sampler_name: 'euler', scheduler: 'normal', denoise: source ? Math.max(0.35, Math.min(0.85, Number(denoise) || 0.65)) : 1, model: ['1', 0], positive: ['2', 0], negative: ['3', 0], latent_image: source ? ['6', 0] : ['4', 0] } },
       '8': { class_type: 'VAEDecode', inputs: { samples: ['7', 0], vae: ['1', 2] } },
       '9': { class_type: 'SaveImage', inputs: { filename_prefix: 'Jarvis', images: ['8', 0] } }
-    };
-    if (!source) { delete workflow['5']; delete workflow['6']; }
+      };
+      if (!source) { delete workflow['5']; delete workflow['6']; }
+    }
     const queued = await net.fetch(`${imageAiUrl}/prompt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: workflow }), signal: AbortSignal.timeout(30000) });
     if (!queued.ok) return { ok: false, message: `ComfyUI rechazó la solicitud (${queued.status}). Comprueba que el modelo sea compatible.` };
     const { prompt_id: promptId } = await queued.json();
@@ -317,13 +352,18 @@ async function runImageAi({ prompt, model, width, height, steps, inputImage, den
       if (!historyResponse.ok) continue;
       const history = await historyResponse.json();
       const job = history[promptId];
+      if (job?.status?.status_str === 'error') {
+        const failure = job.status.messages?.find(message => message?.[0] === 'execution_error')?.[1]?.exception_message || '';
+        if (/hostbuf_file_reader_read|HostBuffer\.read_file_slice|bad allocation|out of memory|cuda out of memory/i.test(failure)) return { ok: false, message: 'ComfyUI agotó la memoria al cargar o ejecutar Z Image Turbo en este equipo (8 GB de VRAM y 16 GB de RAM). Los archivos sí están instalados. Selecciona el checkpoint SD 1.5 para generar aquí, o usa Z Image en un equipo con más memoria.' };
+        return { ok: false, message: 'ComfyUI encontró un error al generar. Revisa el modelo y los nodos instalados.' };
+      }
       const image = Object.values(job?.outputs || {}).flatMap(output => output.images || [])[0];
       if (image?.filename) {
         const query = new URLSearchParams({ filename: image.filename, subfolder: image.subfolder || '', type: image.type || 'output' });
         const result = await net.fetch(`${imageAiUrl}/view?${query}` , { signal: AbortSignal.timeout(30000) });
         if (!result.ok) return { ok: false, message: 'La imagen se generó, pero no pude descargar el resultado desde ComfyUI.' };
         const dataUrl = `data:image/png;base64,${Buffer.from(await result.arrayBuffer()).toString('base64')}`;
-        return { ok: true, dataUrl, model: selectedModel };
+        return { ok: true, dataUrl, model: selectedModel.label || selectedModel.checkpoint || selectedModel.id };
       }
       if (job?.status?.status_str === 'error') return { ok: false, message: 'ComfyUI encontró un error al generar. Revisa que el modelo y sus nodos estén instalados.' };
     }
