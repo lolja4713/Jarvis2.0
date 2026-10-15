@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, shell, dialog, desktopCapturer, net } = req
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFile, spawn } = require('child_process');
+const { execFile, execFileSync, spawn } = require('child_process');
 const crypto = require('crypto');
 
 let win;
@@ -31,11 +31,47 @@ function writeData(value) {
   const store = readStore(); store.profiles = store.profiles || {}; store.profiles[activeAccountId] = value; writeStore(store);
 }
 function publicAccount(account) { return { id: account.id, username: account.username, name: account.name, createdAt: account.createdAt }; }
+function windowsAdminIdentity() {
+  if (process.platform !== 'win32') return null;
+  try {
+    const groups = execFileSync('whoami.exe', ['/groups', '/fo', 'csv', '/nh'], { encoding: 'utf8', windowsHide: true });
+    if (!/\bS-1-5-32-544\b/.test(groups)) return null;
+    const user = execFileSync('whoami.exe', ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8', windowsHide: true });
+    const match = user.match(/"([^"]+)"\s*,\s*"(S-1-[^"]+)"/);
+    if (!match) return null;
+    const username = os.userInfo().username;
+    return { id: `windows-admin-${match[2]}`, username, name: username };
+  } catch { return null; }
+}
+function ensureWindowsAdminProfile(store, identity) {
+  store.adminProfiles = store.adminProfiles || {};
+  store.profiles = store.profiles || {};
+  let account = store.adminProfiles[identity.id];
+  if (!account) {
+    account = { ...identity, createdAt: new Date().toISOString() };
+    store.adminProfiles[identity.id] = account;
+    if (!Array.isArray(store.accounts) || store.accounts.length === 0) {
+      const legacy = { ...store };
+      for (const field of ['accounts', 'profiles', 'adminProfiles']) delete legacy[field];
+      const hasLegacyData = Object.keys(legacy).some(key => key !== 'settings' || Object.keys(legacy.settings || {}).length > 0);
+      if (hasLegacyData) store.profiles[identity.id] = { ...emptyData(), ...legacy, settings: { ...(legacy.settings || {}), name: legacy.settings?.name || identity.name, tutorialDone: false } };
+    }
+    if (!store.profiles[identity.id]) store.profiles[identity.id] = { ...emptyData(), settings: { name: identity.name, tutorialDone: false } };
+    writeStore(store);
+  }
+  return account;
+}
 function authStatus() {
   const store = readStore();
   const accounts = Array.isArray(store.accounts) ? store.accounts : [];
+  const windowsAdmin = windowsAdminIdentity();
+  if (windowsAdmin) {
+    const account = ensureWindowsAdminProfile(store, windowsAdmin);
+    activeAccountId = account.id;
+    return { authenticated: true, isAdmin: true, account: publicAccount(account), hasAccounts: accounts.length > 0, users: accounts.map(item => ({ username: item.username, name: item.name })) };
+  }
   const account = activeAccountId ? accounts.find(item => item.id === activeAccountId) : null;
-  return { authenticated: Boolean(account), account: account ? publicAccount(account) : null, hasAccounts: accounts.length > 0, users: accounts.map(item => ({ username: item.username, name: item.name })) };
+  return { authenticated: Boolean(account), isAdmin: false, account: account ? publicAccount(account) : null, hasAccounts: accounts.length > 0, users: accounts.map(item => ({ username: item.username, name: item.name })) };
 }
 function hashPassword(password, salt) { return crypto.scryptSync(password, salt, 64).toString('hex'); }
 ipcMain.handle('account:status', () => authStatus());
@@ -70,10 +106,13 @@ ipcMain.handle('account:login', (_e, input) => {
 ipcMain.handle('account:update-profile', (_e, input) => {
   if (!activeAccountId) return { ok: false, message: 'Inicia sesión para actualizar tu perfil.' };
   const name = String(input?.name || '').trim(); if (!name || name.length > 60) return { ok: false, message: 'El nombre del perfil debe tener entre 1 y 60 caracteres.' };
-  const store = readStore(); const account = store.accounts?.find(item => item.id === activeAccountId); if (!account) return { ok: false, message: 'No encontré esta cuenta.' };
+  const store = readStore();
+  const adminAccount = windowsAdminIdentity() && store.adminProfiles?.[activeAccountId];
+  if (adminAccount) { adminAccount.name = name; writeStore(store); const profile = readData(); profile.settings = { ...(profile.settings || {}), name }; writeData(profile); return { ok: true, account: publicAccount(adminAccount) }; }
+  const account = store.accounts?.find(item => item.id === activeAccountId); if (!account) return { ok: false, message: 'No encontré esta cuenta.' };
   account.name = name; writeStore(store); const profile = readData(); profile.settings = { ...(profile.settings || {}), name }; writeData(profile); return { ok: true, account: publicAccount(account) };
 });
-ipcMain.handle('account:logout', () => { activeAccountId = null; return { ok: true }; });
+ipcMain.handle('account:logout', () => { if (windowsAdminIdentity()) return { ok: false, message: 'En esta sesión se utiliza automáticamente tu cuenta de Windows administrador.' }; activeAccountId = null; return { ok: true }; });
 function legacyAiHistory(messages) {
   const result = [];
   for (let i = 0; i < messages.length - 1; i++) {
