@@ -2,20 +2,78 @@ const { app, BrowserWindow, ipcMain, shell, dialog, desktopCapturer, net } = req
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
+const crypto = require('crypto');
 
 let win;
 let installedApps = [];
+let activeAccountId = null;
 const userDir = app.getPath('userData');
 const dataFile = path.join(userDir, 'jarvis-data.json');
+const imageAiConfigFile = path.join(userDir, 'image-ai.json');
 function safeAppPath(name) { try { return app.getPath(name); } catch { return null; } }
 const allowedFolders = ['home', 'documents', 'desktop', 'downloads'].map(safeAppPath).filter(Boolean);
 
-function readData() {
-  try { return JSON.parse(fs.readFileSync(dataFile, 'utf8')); }
-  catch { return { settings: {}, usage: {}, favorites: [], history: [] }; }
+function emptyData() { return { settings: {}, usage: {}, favorites: [], history: [], aiMessages: [], aiHistory: [] }; }
+function readStore() {
+  try { const value = JSON.parse(fs.readFileSync(dataFile, 'utf8')); return value && typeof value === 'object' && !Array.isArray(value) ? value : {}; }
+  catch { return {}; }
 }
-function writeData(value) { fs.mkdirSync(userDir, { recursive: true }); fs.writeFileSync(dataFile, JSON.stringify(value, null, 2), 'utf8'); }
+function writeStore(value) { fs.mkdirSync(userDir, { recursive: true }); fs.writeFileSync(dataFile, JSON.stringify(value, null, 2), 'utf8'); }
+function readData() {
+  if (!activeAccountId) return emptyData();
+  const store = readStore();
+  const profile = store.profiles?.[activeAccountId];
+  return profile && typeof profile === 'object' ? profile : emptyData();
+}
+function writeData(value) {
+  if (!activeAccountId) throw new Error('Inicia sesión para guardar los datos de tu perfil.');
+  const store = readStore(); store.profiles = store.profiles || {}; store.profiles[activeAccountId] = value; writeStore(store);
+}
+function publicAccount(account) { return { id: account.id, username: account.username, name: account.name, createdAt: account.createdAt }; }
+function authStatus() {
+  const store = readStore();
+  const accounts = Array.isArray(store.accounts) ? store.accounts : [];
+  const account = activeAccountId ? accounts.find(item => item.id === activeAccountId) : null;
+  return { authenticated: Boolean(account), account: account ? publicAccount(account) : null, hasAccounts: accounts.length > 0, users: accounts.map(item => ({ username: item.username, name: item.name })) };
+}
+function hashPassword(password, salt) { return crypto.scryptSync(password, salt, 64).toString('hex'); }
+ipcMain.handle('account:status', () => authStatus());
+ipcMain.handle('account:register', (_e, input) => {
+  const username = String(input?.username || '').trim(); const key = username.toLowerCase(); const name = String(input?.name || '').trim(); const password = String(input?.password || '');
+  if (!/^[a-zA-Z0-9_.-]{3,24}$/.test(username)) return { ok: false, message: 'El usuario debe tener 3–24 caracteres: letras, números, punto, guion o guion bajo.' };
+  if (!name || name.length > 60) return { ok: false, message: 'Escribe un nombre para tu perfil (máximo 60 caracteres).' };
+  if (password.length < 8 || password.length > 128) return { ok: false, message: 'La contraseña debe tener entre 8 y 128 caracteres.' };
+  const store = readStore(); store.accounts = Array.isArray(store.accounts) ? store.accounts : [];
+  if (store.accounts.some(item => String(item.username).toLowerCase() === key)) return { ok: false, message: 'Ese nombre de usuario ya existe en esta computadora.' };
+  const id = crypto.randomUUID(); const salt = crypto.randomBytes(16).toString('hex');
+  const account = { id, username, name, salt, passwordHash: hashPassword(password, salt), createdAt: new Date().toISOString() };
+  const legacy = !store.accounts.length && !store.profiles ? { ...store } : null;
+  store.accounts.push(account); store.profiles = store.profiles || {};
+  if (legacy) {
+    for (const field of ['accounts', 'profiles']) delete legacy[field];
+    legacy.settings = { ...(legacy.settings || {}), name, tutorialDone: false };
+    store.profiles[id] = { ...emptyData(), ...legacy };
+  } else {
+    store.profiles[id] = { ...emptyData(), settings: { name, tutorialDone: false } };
+  }
+  writeStore(store); activeAccountId = id; return { ok: true, account: publicAccount(account) };
+});
+ipcMain.handle('account:login', (_e, input) => {
+  const username = String(input?.username || '').trim().toLowerCase(); const password = String(input?.password || '');
+  const store = readStore(); const account = (Array.isArray(store.accounts) ? store.accounts : []).find(item => String(item.username).toLowerCase() === username);
+  if (!account || password.length > 128) return { ok: false, message: 'Usuario o contraseña incorrectos.' };
+  const expected = Buffer.from(String(account.passwordHash || ''), 'hex'); const actual = Buffer.from(hashPassword(password, account.salt), 'hex');
+  if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) return { ok: false, message: 'Usuario o contraseña incorrectos.' };
+  activeAccountId = account.id; return { ok: true, account: publicAccount(account) };
+});
+ipcMain.handle('account:update-profile', (_e, input) => {
+  if (!activeAccountId) return { ok: false, message: 'Inicia sesión para actualizar tu perfil.' };
+  const name = String(input?.name || '').trim(); if (!name || name.length > 60) return { ok: false, message: 'El nombre del perfil debe tener entre 1 y 60 caracteres.' };
+  const store = readStore(); const account = store.accounts?.find(item => item.id === activeAccountId); if (!account) return { ok: false, message: 'No encontré esta cuenta.' };
+  account.name = name; writeStore(store); const profile = readData(); profile.settings = { ...(profile.settings || {}), name }; writeData(profile); return { ok: true, account: publicAccount(account) };
+});
+ipcMain.handle('account:logout', () => { activeAccountId = null; return { ok: true }; });
 function legacyAiHistory(messages) {
   const result = [];
   for (let i = 0; i < messages.length - 1; i++) {
@@ -125,6 +183,27 @@ async function imageAiStatus() {
     return { ok: true, models, message: models.length ? 'IA de imágenes local lista. Las imágenes se procesan en esta PC.' : 'ComfyUI está iniciado, pero falta un modelo de imagen compatible.' };
   } catch { return { ok: false, models: [], message: imageAiError() }; }
 }
+function validComfyPortableRoot(root) {
+  const base = path.resolve(String(root || ''));
+  return fs.existsSync(path.join(base, 'python_embeded', 'python.exe')) && fs.existsSync(path.join(base, 'ComfyUI', 'main.py')) ? base : null;
+}
+ipcMain.handle('images:ai-select-folder', async () => {
+  const result = await dialog.showOpenDialog(win, { title: 'Selecciona la carpeta ComfyUI portable', properties: ['openDirectory'] });
+  if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true };
+  const root = validComfyPortableRoot(result.filePaths[0]);
+  if (!root) return { ok: false, message: 'Elige la carpeta principal de ComfyUI portable, la que contiene python_embeded y ComfyUI.' };
+  fs.mkdirSync(userDir, { recursive: true }); fs.writeFileSync(imageAiConfigFile, JSON.stringify({ enginePath: root }, null, 2), 'utf8');
+  return { ok: true, path: root };
+});
+ipcMain.handle('images:ai-start', async () => {
+  try { const health = await net.fetch(`${imageAiUrl}/system_stats`, { signal: AbortSignal.timeout(1500) }); if (health.ok) return { ...await imageAiStatus(), started: false }; } catch {}
+  let config = {}; try { config = JSON.parse(fs.readFileSync(imageAiConfigFile, 'utf8')); } catch {}
+  const root = validComfyPortableRoot(config.enginePath);
+  if (!root) return { ok: false, needsFolder: true, message: 'Selecciona la carpeta principal de ComfyUI portable para que Jarvis pueda iniciar la IA local.' };
+  const python = path.join(root, 'python_embeded', 'python.exe');
+  try { const child = spawn(python, ['-s', 'ComfyUI/main.py', '--windows-standalone-build', '--port', '8188'], { cwd: root, windowsHide: true, detached: true, stdio: 'ignore' }); child.unref(); return { ok: true, started: true, message: 'ComfyUI está iniciando en esta PC. La primera carga puede tardar un minuto.' }; }
+  catch { return { ok: false, message: 'No pude iniciar ComfyUI desde esa carpeta. Revisa que sea la versión portable de Windows para NVIDIA.' }; }
+});
 async function imageAiUpload(dataUrl) {
   if (typeof dataUrl !== 'string' || dataUrl.length > 45 * 1024 * 1024) throw new Error('La imagen supera el límite permitido de 25 MB.');
   const match = dataUrl.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/);
