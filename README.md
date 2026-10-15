@@ -57,3 +57,7 @@ Esta versión implementa una base de escritorio, no las 100 capacidades completa
 La conversación general requiere Ollama instalado localmente y un modelo descargado. El wake word (15), reconocimiento de personas/emociones (4 y 12), correo/calendario (33–35 y 40), análisis de seguridad, cámaras, domótica, robots/drones y agentes continuos necesitan servicios, credenciales, hardware y permisos que aún no están conectados. No generar una nueva versión instalable hasta resolver los problemas pendientes y completar la revisión del proyecto.
 
 El editor de imágenes incluido es local y no genera imágenes mediante IA. La detección de aplicaciones utiliza `Get-StartApps` de Windows; muestra las apps registradas en el menú Inicio y depende de PowerShell y del registro de lanzamiento que Windows exponga.
+
+## Taller 3D para Blender
+
+Jarvis incluye un constructor básico de escenas con primitivas (cubo, esfera, cilindro, cono y toroide), vista previa isométrica, posición, escala, giro y color. Exporta un archivo OBJ y su material MTL para importar en Blender. La edición avanzada, rigging y preparación de avatares VRChat siguen haciéndose desde Blender; Jarvis no instala Blender ni crea un instalador nuevo.
