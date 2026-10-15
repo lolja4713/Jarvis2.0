@@ -226,6 +226,21 @@ function validComfyPortableRoot(root) {
   const base = path.resolve(String(root || ''));
   return fs.existsSync(path.join(base, 'python_embeded', 'python.exe')) && fs.existsSync(path.join(base, 'ComfyUI', 'main.py')) ? base : null;
 }
+function resolveComfyPortableRoot() {
+  let config = {}; try { config = JSON.parse(fs.readFileSync(imageAiConfigFile, 'utf8')); } catch {}
+  const configured = validComfyPortableRoot(config.enginePath);
+  if (configured) return configured;
+  const candidates = [
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'JarvisImageEngine', 'ComfyUI_windows_portable'),
+    path.join(os.homedir(), 'ComfyUI_windows_portable'),
+    path.join(os.homedir(), 'Downloads', 'ComfyUI_windows_portable')
+  ].filter(Boolean);
+  const discovered = candidates.map(validComfyPortableRoot).find(Boolean);
+  if (!discovered) return null;
+  fs.mkdirSync(userDir, { recursive: true });
+  fs.writeFileSync(imageAiConfigFile, JSON.stringify({ enginePath: discovered }, null, 2), 'utf8');
+  return discovered;
+}
 ipcMain.handle('images:ai-select-folder', async () => {
   const result = await dialog.showOpenDialog(win, { title: 'Selecciona la carpeta ComfyUI portable', properties: ['openDirectory'] });
   if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true };
@@ -236,11 +251,17 @@ ipcMain.handle('images:ai-select-folder', async () => {
 });
 ipcMain.handle('images:ai-start', async () => {
   try { const health = await net.fetch(`${imageAiUrl}/system_stats`, { signal: AbortSignal.timeout(1500) }); if (health.ok) return { ...await imageAiStatus(), started: false }; } catch {}
-  let config = {}; try { config = JSON.parse(fs.readFileSync(imageAiConfigFile, 'utf8')); } catch {}
-  const root = validComfyPortableRoot(config.enginePath);
+  const root = resolveComfyPortableRoot();
   if (!root) return { ok: false, needsFolder: true, message: 'Selecciona la carpeta principal de ComfyUI portable para que Jarvis pueda iniciar la IA local.' };
   const python = path.join(root, 'python_embeded', 'python.exe');
-  try { const child = spawn(python, ['-s', 'ComfyUI/main.py', '--windows-standalone-build', '--port', '8188'], { cwd: root, windowsHide: true, detached: true, stdio: 'ignore' }); child.unref(); return { ok: true, started: true, message: 'ComfyUI está iniciando en esta PC. La primera carga puede tardar un minuto.' }; }
+  try {
+    await new Promise((resolve, reject) => {
+      const child = spawn(python, ['-s', 'ComfyUI/main.py', '--windows-standalone-build', '--port', '8188'], { cwd: root, windowsHide: true, detached: true, stdio: 'ignore' });
+      child.once('error', reject);
+      child.once('spawn', () => { child.unref(); resolve(); });
+    });
+    return { ok: true, started: true, message: 'ComfyUI está iniciando en esta PC. La primera carga puede tardar un minuto.' };
+  }
   catch { return { ok: false, message: 'No pude iniciar ComfyUI desde esa carpeta. Revisa que sea la versión portable de Windows para NVIDIA.' }; }
 });
 async function imageAiUpload(dataUrl) {
