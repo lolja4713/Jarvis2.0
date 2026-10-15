@@ -13,6 +13,12 @@ const dataFile = path.join(userDir, 'jarvis-data.json');
 const imageAiConfigFile = path.join(userDir, 'image-ai.json');
 function safeAppPath(name) { try { return app.getPath(name); } catch { return null; } }
 const allowedFolders = ['home', 'documents', 'desktop', 'downloads'].map(safeAppPath).filter(Boolean);
+function resolveAllowedUserPath(target) {
+  try {
+    const resolved = fs.realpathSync(path.resolve(String(target || '')));
+    return allowedFolders.some(root => { try { const safeRoot = fs.realpathSync(root).toLowerCase(); const candidate = resolved.toLowerCase(); return candidate === safeRoot || candidate.startsWith(safeRoot + path.sep.toLowerCase()); } catch { return false; } }) ? resolved : null;
+  } catch { return null; }
+}
 
 function emptyData() { return { settings: {}, usage: {}, favorites: [], history: [], aiMessages: [], aiHistory: [] }; }
 function readStore() {
@@ -135,23 +141,23 @@ ipcMain.handle('shell:open-external', (_e, url) => /^https:\/\/ollama\.com\/down
 ipcMain.handle('settings:save', (_e, value) => { const d = readData(); d.settings = { ...d.settings, ...value }; writeData(d); return d.settings; });
 ipcMain.handle('usage:record', (_e, label) => { const d = readData(); const key = String(label).trim().toLowerCase(); if (key) d.usage[key] = (d.usage[key] || 0) + 1; d.history.unshift({ label: String(label), at: new Date().toISOString() }); d.history = d.history.slice(0, 40); writeData(d); return publicData(d); });
 ipcMain.handle('ai:models', async () => {
-  try { const response = await net.fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(5000) }); if (!response.ok) return { ok: false, models: [], message: 'Ollama no estÃ¡ iniciado. InÃ­cialo para usar IA local.' }; const result = await response.json(); const models = (result.models || []).map(m => m.name).filter(Boolean); return { ok: true, models, message: models.length ? 'IA local lista. Tus mensajes no salen de este equipo.' : 'Ollama está iniciado, pero todavía no hay modelos descargados.' }; }
-  catch { return { ok: false, models: [], message: 'Ollama no estÃ¡ disponible. InstÃ¡lalo e inicia un modelo para usar IA gratis y local.' }; }
+  try { const response = await net.fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(5000) }); if (!response.ok) return { ok: false, models: [], message: 'Ollama no está iniciado. Inícialo para usar IA local.' }; const result = await response.json(); const models = (result.models || []).map(m => m.name).filter(Boolean); return { ok: true, models, message: models.length ? 'IA local lista. Tus mensajes no salen de este equipo.' : 'Ollama está iniciado, pero todavía no hay modelos descargados.' }; }
+  catch { return { ok: false, models: [], message: 'Ollama no está disponible. Instálalo e inicia un modelo para usar IA gratis y local.' }; }
 });
 ipcMain.handle('ai:save-config', (_e, config) => { const d = readData(); d.settings = { ...d.settings, aiModel: String(config?.model || '').slice(0, 120), personality: ['amable', 'profesional', 'divertida'].includes(config?.personality) ? config.personality : 'amable' }; writeData(d); return { ...d.settings }; });
 ipcMain.handle('ai:clear-chat', () => { const d = readData(); d.aiHistory = getAiHistory(d); d.aiMessages = []; writeData(d); return []; });
 ipcMain.handle('ai:chat', async (_e, prompt) => {
-  const text = String(prompt || '').trim().slice(0, 6000); if (!text) return { ok: false, message: 'Escribe una pregunta o instrucciÃ³n.' };
+  const text = String(prompt || '').trim().slice(0, 6000); if (!text) return { ok: false, message: 'Escribe una pregunta o instrucción.' };
   const d = readData(); const model = String(d.settings.aiModel || '').slice(0, 120);
   if (!model) return { ok: false, message: 'Primero actualiza la lista y selecciona un modelo local de Ollama.' };
   const personalities = { amable: 'Responde de forma amable, natural y clara.', profesional: 'Responde de forma profesional, directa y ordenada.', divertida: 'Responde con calidez y humor ligero, sin distraerte de la tarea.' };
   const history = Array.isArray(d.aiMessages) ? d.aiMessages.slice(-12).filter(m => ['user', 'assistant'].includes(m.role) && typeof m.content === 'string').map(m => ({ role: m.role, content: m.content.slice(0, 6000) })) : [];
   let response;
-  try { response = await net.fetch('http://127.0.0.1:11434/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model, stream: false, messages: [{ role: 'system', content: `Eres Jarvis 2.0, un asistente personal en espaÃ±ol. ${personalities[d.settings.personality] || personalities.amable} Responde en el idioma del usuario. No afirmes haber ejecutado acciones en su computadora: aquÃ­ solo conversas y generas texto.` }, ...history, { role: 'user', content: text }] }), signal: AbortSignal.timeout(180000) }); }
-  catch { return { ok: false, message: 'No pude conectar con Ollama. Comprueba que estÃ© iniciado y que tengas descargado un modelo.' }; }
-  if (!response.ok) return { ok: false, message: response.status === 404 ? 'No encuentro ese modelo. Actualiza la lista de modelos locales.' : `Ollama respondiÃ³ con error ${response.status}.` };
+  try { response = await net.fetch('http://127.0.0.1:11434/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model, stream: false, messages: [{ role: 'system', content: `Eres Jarvis 2.0, un asistente personal en español. ${personalities[d.settings.personality] || personalities.amable} Responde en el idioma del usuario. No afirmes haber ejecutado acciones en su computadora: aquí solo conversas y generas texto.` }, ...history, { role: 'user', content: text }] }), signal: AbortSignal.timeout(180000) }); }
+  catch { return { ok: false, message: 'No pude conectar con Ollama. Comprueba que esté iniciado y que tengas descargado un modelo.' }; }
+  if (!response.ok) return { ok: false, message: response.status === 404 ? 'No encuentro ese modelo. Actualiza la lista de modelos locales.' : `Ollama respondió con error ${response.status}.` };
   let result; try { result = await response.json(); } catch { return { ok: false, message: 'No se pudo leer la respuesta del modelo local.' }; }
-  const answer = String(result.message?.content || '').trim(); if (!answer) return { ok: false, message: 'El modelo local no devolviÃ³ texto esta vez.' };
+  const answer = String(result.message?.content || '').trim(); if (!answer) return { ok: false, message: 'El modelo local no devolvió texto esta vez.' };
   const askedAt = new Date().toISOString(); const aiHistory = getAiHistory(d);
   d.aiMessages = [...history, { role: 'user', content: text }, { role: 'assistant', content: answer }].slice(-40);
   d.aiHistory = [...aiHistory, { question: text, answer, at: askedAt }].slice(-100);
@@ -176,11 +182,22 @@ ipcMain.handle('ai:chat', async (_e, prompt) => {
   }
   return found;
 });
-ipcMain.handle('files:open', async (_e, file) => { if (typeof file !== 'string') return false; const resolved = path.resolve(file); if (!allowedFolders.some(root => resolved.toLowerCase().startsWith(path.resolve(root).toLowerCase() + path.sep))) return false; await shell.openPath(resolved); return true; });
+ipcMain.handle('files:open', async (_e, file) => { if (typeof file !== 'string') return false; const resolved = resolveAllowedUserPath(file); if (!resolved) return false; await shell.openPath(resolved); return true; });
+ipcMain.handle('files:delete', async (_e, file) => {
+  if (typeof file !== 'string') return { ok: false, message: 'Selecciona un archivo válido.' };
+  try { if (fs.lstatSync(file).isSymbolicLink()) return { ok: false, message: 'Por seguridad no elimino enlaces simbólicos.' }; } catch { return { ok: false, message: 'El archivo ya no existe.' }; }
+  const resolved = resolveAllowedUserPath(file);
+  if (!resolved) return { ok: false, message: 'Solo puedo eliminar archivos dentro de tus carpetas personales.' };
+  try { const stat = fs.lstatSync(resolved); if (!stat.isFile() || stat.isSymbolicLink()) return { ok: false, message: 'Por seguridad solo elimino archivos normales, no carpetas ni enlaces.' }; fs.unlinkSync(resolved); return { ok: true, message: 'Archivo eliminado.' }; }
+  catch { return { ok: false, message: 'No pude eliminar el archivo. Comprueba sus permisos.' }; }
+});
 ipcMain.handle('apps:open', async (_e, name) => {
-  const target = String(name || '').trim(); if (!target || target.length > 120) return { ok: false, message: 'Escribe el nombre de una aplicaciÃ³n.' };
+  const target = String(name || '').trim(); if (!target || target.length > 120) return { ok: false, message: 'Escribe el nombre de una aplicación.' };
   if (process.platform === 'win32') {
-    const found = installedApps.find(item => item.name.toLowerCase() === target.toLowerCase() || item.appId.toLowerCase() === target.toLowerCase());
+    if (!installedApps.length) await listInstalledApps();
+    const exact = installedApps.find(item => item.name.toLowerCase() === target.toLowerCase() || item.appId.toLowerCase() === target.toLowerCase());
+    const matches = installedApps.filter(item => item.name.toLowerCase().includes(target.toLowerCase()));
+    const found = exact || (/^minecraft$/i.test(target) ? matches.find(item => /launcher/i.test(item.name)) : matches.length === 1 ? matches[0] : null);
     if (found) { execFile('explorer.exe', [`shell:AppsFolder\\${found.appId}`], { windowsHide: true }, () => {}); return { ok: true, message: `Abriendo ${found.name}.` }; }
   }
   if (/^(minecraft|minecraft launcher)$/i.test(target)) {
@@ -191,19 +208,22 @@ ipcMain.handle('apps:open', async (_e, name) => {
   }
   const common = { calculadora: 'calc.exe', calculator: 'calc.exe', bloc: 'notepad.exe', notepad: 'notepad.exe', notas: 'notepad.exe', paint: 'mspaint.exe', explorador: 'explorer.exe', navegador: 'https://www.google.com', chrome: 'chrome.exe' };
   const program = common[target.toLowerCase()];
-  if (!program) return { ok: false, message: `AÃºn no tengo una acciÃ³n segura para abrir Â«${target}Â». Puedes aÃ±adirla en PersonalizaciÃ³n.` };
+  if (!program) return { ok: false, message: `Aún no tengo una acción segura para abrir «${target}». Puedes añadirla en Personalización.` };
   if (/^https?:/.test(program)) await shell.openExternal(program); else execFile('cmd.exe', ['/c', 'start', '', program], { windowsHide: true }, () => {});
   return { ok: true, message: `Abriendo ${target}.` };
 });
-ipcMain.handle('apps:list', () => new Promise(resolve => {
-  if (process.platform !== 'win32') return resolve([]);
-  const script = 'Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress';
-  execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 15000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => {
-    if (error) return resolve([]);
-    try { const value = JSON.parse(stdout.trim()); const items = (Array.isArray(value) ? value : [value]).filter(x => x && typeof x.Name === 'string' && typeof x.AppID === 'string').map(x => ({ name: x.Name.trim(), appId: x.AppID.trim() })).filter(x => x.name && x.appId); installedApps = [...new Map(items.map(x => [x.appId, x])).values()].slice(0, 500); resolve(installedApps.map(({ name, appId }) => ({ name, appId }))); }
-    catch { resolve([]); }
+async function listInstalledApps() {
+  if (process.platform !== 'win32') return [];
+  return new Promise(resolve => {
+    const script = 'Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress';
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 15000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => {
+      if (error) return resolve([]);
+      try { const value = JSON.parse(stdout.trim()); const items = (Array.isArray(value) ? value : [value]).filter(x => x && typeof x.Name === 'string' && typeof x.AppID === 'string').map(x => ({ name: x.Name.trim(), appId: x.AppID.trim() })).filter(x => x.name && x.appId); installedApps = [...new Map(items.map(x => [x.appId, x])).values()].slice(0, 500); resolve(installedApps.map(({ name, appId }) => ({ name, appId }))); }
+      catch { resolve([]); }
+    });
   });
-}));
+}
+ipcMain.handle('apps:list', listInstalledApps);
 const imageAiUrl = 'http://127.0.0.1:8188';
 function imageAiError(error) {
   if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return 'ComfyUI tardó demasiado en responder. Revisa su ventana y vuelve a intentarlo.';
@@ -374,23 +394,85 @@ ipcMain.handle('images:ai-status', imageAiStatus);
 ipcMain.handle('images:ai-generate', (_e, options) => runImageAi(options || {}));
 ipcMain.handle('images:ai-edit', (_e, options) => runImageAi({ ...(options || {}), inputImage: options?.inputImage }));
 ipcMain.handle('images:open', async () => {
-  const result = await dialog.showOpenDialog(win, { title: 'Abrir imagen', properties: ['openFile'], filters: [{ name: 'ImÃ¡genes', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] }] });
+  const result = await dialog.showOpenDialog(win, { title: 'Abrir imagen', properties: ['openFile'], filters: [{ name: 'Imágenes', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] }] });
   if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true };
   const file = result.filePaths[0]; const ext = path.extname(file).toLowerCase(); const mime = ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.bmp': 'image/bmp', '.gif': 'image/gif' })[ext];
-  try { const bytes = fs.readFileSync(file); if (bytes.length > 25 * 1024 * 1024) return { ok: false, message: 'La imagen supera el lÃ­mite de 25 MB.' }; return { ok: true, name: path.basename(file), dataUrl: `data:${mime};base64,${bytes.toString('base64')}` }; }
+  try { const bytes = fs.readFileSync(file); if (bytes.length > 25 * 1024 * 1024) return { ok: false, message: 'La imagen supera el límite de 25 MB.' }; return { ok: true, name: path.basename(file), dataUrl: `data:${mime};base64,${bytes.toString('base64')}` }; }
   catch { return { ok: false, message: 'No se pudo leer esa imagen.' }; }
 });
 ipcMain.handle('images:save', async (_e, dataUrl) => {
-  if (typeof dataUrl !== 'string' || !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(dataUrl) || dataUrl.length > 45 * 1024 * 1024) return { ok: false, message: 'La imagen no tiene un formato PNG vÃ¡lido.' };
+  if (typeof dataUrl !== 'string' || !/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(dataUrl) || dataUrl.length > 45 * 1024 * 1024) return { ok: false, message: 'La imagen no tiene un formato PNG válido.' };
   const result = await dialog.showSaveDialog(win, { title: 'Guardar imagen', defaultPath: path.join(app.getPath('pictures'), 'Jarvis-creacion.png'), filters: [{ name: 'Imagen PNG', extensions: ['png'] }] });
   if (result.canceled || !result.filePath) return { ok: false, canceled: true };
-  try { const payload = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64'); if (payload.length > 32 * 1024 * 1024) return { ok: false, message: 'La imagen supera el lÃ­mite de 32 MB.' }; fs.writeFileSync(result.filePath, payload); return { ok: true, path: result.filePath }; }
+  try { const payload = Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64'); if (payload.length > 32 * 1024 * 1024) return { ok: false, message: 'La imagen supera el límite de 32 MB.' }; fs.writeFileSync(result.filePath, payload); return { ok: true, path: result.filePath }; }
   catch { return { ok: false, message: 'No se pudo guardar la imagen.' }; }
 });
+function runPowerShell(script, timeout = 15000) {
+  return new Promise((resolve, reject) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass', '-Command', script], { windowsHide: true, timeout, maxBuffer: 2 * 1024 * 1024 }, (error, stdout, stderr) => error ? reject(new Error(String(stderr || error.message).trim())) : resolve(String(stdout || '').trim())));
+}
+const audioControlScript = mode => `
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] public class MMDeviceEnumeratorComObject {}
+[ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] public interface IMMDeviceEnumerator { int EnumAudioEndpoints(int dataFlow, int stateMask, out IntPtr devices); int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice device); int GetDevice(string id, out IMMDevice device); int RegisterEndpointNotificationCallback(IntPtr client); int UnregisterEndpointNotificationCallback(IntPtr client); }
+[ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] public interface IMMDevice { int Activate(ref Guid iid, int cls, IntPtr parameters, [MarshalAs(UnmanagedType.Interface)] out IAudioEndpointVolume endpoint); int OpenPropertyStore(int access, out IntPtr properties); int GetId(out IntPtr id); int GetState(out int state); }
+[ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)] public interface IAudioEndpointVolume { int RegisterControlChangeNotify(IntPtr client); int UnregisterControlChangeNotify(IntPtr client); int GetChannelCount(out uint count); int SetMasterVolumeLevel(float level, ref Guid context); int SetMasterVolumeLevelScalar(float level, ref Guid context); int GetMasterVolumeLevel(out float level); int GetMasterVolumeLevelScalar(out float level); int SetChannelVolumeLevel(uint channel, float level, ref Guid context); int SetChannelVolumeLevelScalar(uint channel, float level, ref Guid context); int GetChannelVolumeLevel(uint channel, out float level); int GetChannelVolumeLevelScalar(uint channel, out float level); int SetMute(bool mute, ref Guid context); int GetMute(out bool mute); }
+
+public static class JarvisAudio { public static IAudioEndpointVolume Endpoint() { var e=(IMMDeviceEnumerator)new MMDeviceEnumeratorComObject(); IMMDevice d; var hr=e.GetDefaultAudioEndpoint(0,1,out d); if(hr!=0) Marshal.ThrowExceptionForHR(hr); var iid=new Guid("5CDF2C82-841E-4546-9722-0CF74078229A"); IAudioEndpointVolume v; hr=d.Activate(ref iid,23,IntPtr.Zero,out v); if(hr!=0) Marshal.ThrowExceptionForHR(hr); return v; } public static int Get() { float x; var hr=Endpoint().GetMasterVolumeLevelScalar(out x); if(hr!=0) Marshal.ThrowExceptionForHR(hr); return (int)Math.Round(x*100); } public static int Set(int n) { var g=Guid.Empty; return Endpoint().SetMasterVolumeLevelScalar(n/100f,ref g); } }
+'@
+${mode}
+`;
+async function getVolume() {
+  if (process.platform !== 'win32') return { ok: false, message: 'El control de volumen solo está disponible en Windows.' };
+  try { const output = await runPowerShell(audioControlScript('[JarvisAudio]::Get()')); return { ok: true, level: Math.max(0, Math.min(100, Number(output))) }; }
+  catch { return { ok: false, message: 'No pude leer el volumen del dispositivo de audio predeterminado.' }; }
+}
 ipcMain.handle('system:metrics', async () => {
   const before = os.cpus(); const idleBefore = before.reduce((sum, c) => sum + c.times.idle, 0); const totalBefore = before.reduce((sum, c) => sum + Object.values(c.times).reduce((a, b) => a + b, 0), 0);
   await new Promise(resolve => setTimeout(resolve, 250)); const after = os.cpus(); const idleAfter = after.reduce((sum, c) => sum + c.times.idle, 0); const totalAfter = after.reduce((sum, c) => sum + Object.values(c.times).reduce((a, b) => a + b, 0), 0);
   return { cpu: Math.round((1 - (idleAfter - idleBefore) / Math.max(1, totalAfter - totalBefore)) * 100), memory: Math.round((1 - os.freemem() / os.totalmem()) * 100), totalMemory: Math.round(os.totalmem() / 1073741824), freeMemory: Math.round(os.freemem() / 1073741824), uptime: Math.floor(os.uptime()), platform: os.platform(), release: os.release() };
+});
+ipcMain.handle('system:volume:get', getVolume);
+ipcMain.handle('system:brightness:get', async () => {
+  if (process.platform !== 'win32') return { ok: false, message: 'El control de brillo solo está disponible en Windows.' };
+  try { const output = await runPowerShell("$m=@(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness -ErrorAction SilentlyContinue); if(!$m.Count){'UNSUPPORTED'}else{($m[0].CurrentBrightness)}"); const level = Number(output); return Number.isFinite(level) ? { ok: true, level } : { ok: false, message: 'Este monitor no informa su brillo actual.' }; }
+  catch { return { ok: false, message: 'Windows no pudo consultar el brillo de la pantalla.' }; }
+});
+ipcMain.handle('system:gpu', async () => {
+  if (process.platform !== 'win32') return { ok: false, devices: [], message: 'La detección de GPU está disponible en Windows.' };
+  try { const output = await runPowerShell("$g=@(Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM,DriverVersion); $u=Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -ErrorAction SilentlyContinue | Measure-Object -Property UtilizationPercentage -Maximum; $r=[pscustomobject]@{Devices=$g; Activity=$u.Maximum}; ConvertTo-Json -InputObject $r -Compress -Depth 4"); const result = JSON.parse(output || '{}'); const devices = result.Devices || []; return { ok: true, devices: (Array.isArray(devices) ? devices : [devices]).map(gpu => ({ name: String(gpu.Name || 'GPU'), memoryGB: Number(gpu.AdapterRAM) ? Math.round(Number(gpu.AdapterRAM) / 1073741824 * 10) / 10 : null, driver: String(gpu.DriverVersion || '') })), activityPercent: Number.isFinite(Number(result.Activity)) ? Math.round(Number(result.Activity)) : null }; }
+  catch { return { ok: false, devices: [], message: 'No pude consultar la información de la GPU.' }; }
+});
+ipcMain.handle('system:security', async () => {
+  if (process.platform !== 'win32') return { ok: false, message: 'El diagnóstico local está disponible en Windows.' };
+  const script = "$ErrorActionPreference='Stop'; $firewall=@(); $defender=$null; $listeners=0; $failedLogons=$null; try{$firewall=@(Get-NetFirewallProfile | Select-Object Name,Enabled,DefaultInboundAction)}catch{}; try{$defender=Get-MpComputerStatus | Select-Object AMServiceEnabled,AntivirusEnabled,RealTimeProtectionEnabled}catch{}; try{$listeners=@(Get-NetTCPConnection -State Listen -ErrorAction Stop).Count}catch{}; try{$failedLogons=@(Get-WinEvent -FilterHashtable @{LogName='Security';Id=4625;StartTime=(Get-Date).AddHours(-24)} -MaxEvents 100 -ErrorAction Stop).Count}catch{}; $r=[pscustomobject]@{Firewall=$firewall;Defender=$defender;ListeningPorts=$listeners;FailedLogons24h=$failedLogons}; ConvertTo-Json -InputObject $r -Compress -Depth 4";
+  try {
+    const output = await runPowerShell(script, 30000); const result = JSON.parse(output || '{}'); const firewall = result.Firewall || []; const profiles = (Array.isArray(firewall) ? firewall : [firewall]).map(item => ({ name: String(item.Name || 'Perfil'), enabled: item.Enabled === true || Number(item.Enabled) === 1 || String(item.Enabled).toLowerCase() === 'true', inbound: String(item.DefaultInboundAction || 'Unknown') })); const defender = result.Defender ? { serviceEnabled: result.Defender.AMServiceEnabled === true, antivirusEnabled: result.Defender.AntivirusEnabled === true, realtimeEnabled: result.Defender.RealTimeProtectionEnabled === true } : null;
+    const failedLogons24h = result.FailedLogons24h === null || result.FailedLogons24h === undefined ? null : Number(result.FailedLogons24h); const alerts = []; if (profiles.length && profiles.some(profile => !profile.enabled)) alerts.push('Uno o más perfiles del firewall están desactivados.'); if (defender && !defender.realtimeEnabled) alerts.push('La protección en tiempo real de Microsoft Defender figura desactivada.'); if (Number.isFinite(failedLogons24h) && failedLogons24h >= 10) alerts.push('Se registraron 10 o más intentos de inicio de sesión fallidos en las últimas 24 horas.');
+    return { ok: true, profiles, defender, listeningPorts: Number(result.ListeningPorts) || 0, failedLogons24h: Number.isFinite(failedLogons24h) ? failedLogons24h : null, alerts, message: alerts.length ? 'La revisión encontró aspectos que conviene revisar.' : 'La revisión local terminó.' };
+  } catch { return { ok: false, message: 'No pude consultar el estado de seguridad de Windows con esta cuenta.' }; }
+});
+let manageableProcessIds = new Set();
+ipcMain.handle('system:processes', async () => {
+  if (process.platform !== 'win32') return [];
+  try {
+    const output = await runPowerShell("$p=@(Get-Process | Where-Object {$_.MainWindowTitle} | Sort-Object WorkingSet64 -Descending | Select-Object -First 30 Id,ProcessName,MainWindowTitle,WorkingSet64); ConvertTo-Json -InputObject $p -Compress");
+    const processes = JSON.parse(output || '[]');
+    const list = (Array.isArray(processes) ? processes : [processes]).map(item => ({ pid: Number(item.Id), name: String(item.ProcessName || 'Aplicación'), title: String(item.MainWindowTitle || item.ProcessName || 'Aplicación'), memoryMB: Math.round(Number(item.WorkingSet64 || 0) / 1048576) })).filter(item => Number.isInteger(item.pid) && item.pid > 0 && item.pid !== process.pid);
+    manageableProcessIds = new Set(list.map(item => item.pid));
+    return list;
+  } catch { manageableProcessIds = new Set(); return []; }
+});
+ipcMain.handle('system:process:close', async (_e, pid) => {
+  const id = Number(pid);
+  if (!Number.isInteger(id) || id < 1 || !manageableProcessIds.has(id) || id === process.pid) return { ok: false, message: 'Actualiza la lista y selecciona una aplicación visible.' };
+  try {
+    await new Promise((resolve, reject) => execFile('taskkill.exe', ['/PID', String(id), '/T'], { windowsHide: true, timeout: 10000 }, error => error ? reject(error) : resolve()));
+    manageableProcessIds.delete(id);
+    return { ok: true, message: 'Se envió la solicitud para cerrar la aplicación.' };
+  } catch { return { ok: false, message: 'La aplicación no se cerró. Puede tener un diálogo abierto o requerir permisos.' }; }
 });
 ipcMain.handle('system:screenshot', async () => {
   const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1920, height: 1080 } });
@@ -401,26 +483,40 @@ ipcMain.handle('system:screenshot', async () => {
 ipcMain.handle('system:power', async (_e, action) => {
   if (!['shutdown', 'restart'].includes(action)) return { ok: false };
   const args = action === 'shutdown' ? ['/s', '/t', '30'] : ['/r', '/t', '30'];
-  execFile('shutdown.exe', args, { windowsHide: true }, error => { if (error && win) win.webContents.send('system:power-result', { ok: false, message: 'Windows rechazÃ³ la solicitud.' }); });
-  return { ok: true, message: `Windows se ${action === 'shutdown' ? 'apagarÃ¡' : 'reiniciarÃ¡'} en 30 segundos. Puedes cancelar con â€œcancelar apagadoâ€.` };
+  execFile('shutdown.exe', args, { windowsHide: true }, error => { if (error && win) win.webContents.send('system:power-result', { ok: false, message: 'Windows rechazó la solicitud.' }); });
+  return { ok: true, message: `Windows se ${action === 'shutdown' ? 'apagará' : 'reiniciará'} en 30 segundos. Puedes cancelar con “cancelar apagado”.` };
 });
 ipcMain.handle('system:cancel-power', () => new Promise(resolve => execFile('shutdown.exe', ['/a'], { windowsHide: true }, error => resolve({ ok: !error, message: error ? 'No hay un apagado pendiente.' : 'Apagado cancelado.' }))));
 ipcMain.handle('system:volume', (_e, level) => {
   const n = Number(level); if (!Number.isFinite(n) || n < 0 || n > 100) return { ok: false, message: 'El volumen debe estar entre 0 y 100.' };
-  return { ok: false, message: 'El control de volumen necesita una integraciÃ³n nativa de audio de Windows que aÃºn no estÃ¡ instalada.' };
+  if (process.platform !== 'win32') return { ok: false, message: 'El control de volumen solo está disponible en Windows.' };
+  return runPowerShell(audioControlScript(`if ([JarvisAudio]::Set(${Math.round(n)}) -ne 0) { throw 'Windows no pudo cambiar el volumen.' }; 'OK'`)).then(() => ({ ok: true, level: n, message: `Volumen ajustado a ${n}%.` })).catch(() => ({ ok: false, message: 'Windows no pudo cambiar el volumen. Comprueba el dispositivo de salida.' }));
 });
 ipcMain.handle('system:brightness', (_e, level) => {
   const n = Number(level); if (!Number.isFinite(n) || n < 0 || n > 100) return { ok: false, message: 'El brillo debe estar entre 0 y 100.' };
-  return { ok: false, message: 'El control de brillo no estÃ¡ disponible en todos los monitores y requiere integraciÃ³n compatible.' };
+  if (process.platform !== 'win32') return { ok: false, message: 'El control de brillo solo está disponible en Windows.' };
+  const script = `$ErrorActionPreference='Stop'; $target=${Math.round(n)}; $monitors=@(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods -ErrorAction SilentlyContinue); if (!$monitors.Count) { Write-Output 'UNSUPPORTED'; exit 0 }; foreach($monitor in $monitors) { try { $null=Invoke-CimMethod -InputObject $monitor -MethodName WmiSetBrightness -Arguments @{Timeout=[uint32]1;Brightness=[byte]$target} -ErrorAction Stop } catch {} }; Start-Sleep -Milliseconds 250; $readings=@(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness -ErrorAction SilentlyContinue); if($readings | Where-Object {$_.CurrentBrightness -eq $target}){'OK'}else{'FAILED'}`;
+  return runPowerShell(script).then(output => output === 'OK' ? ({ ok: true, level: Math.round(n), message: `Brillo ajustado a ${Math.round(n)}%.` }) : ({ ok: false, message: output === 'UNSUPPORTED' ? 'Este monitor no permite ajustar el brillo desde Windows.' : 'Windows no pudo cambiar el brillo de la pantalla.' })).catch(() => ({ ok: false, message: 'Windows no pudo consultar los controles de brillo de la pantalla.' }));
 });
-ipcMain.handle('web:search', async (_e, query) => { const q = String(query || '').trim().slice(0, 300); if (!q) return { ok: false, message: 'Escribe quÃ© quieres buscar.' }; await shell.openExternal(`https://www.google.com/search?q=${encodeURIComponent(q)}`); return { ok: true, message: `AbrÃ­ una bÃºsqueda de ${q}.` }; });
-ipcMain.handle('web:translate', async (_e, text) => { const q = String(text || '').trim().slice(0, 1000); if (!q) return { ok: false, message: 'Escribe el texto que quieres traducir.' }; await shell.openExternal(`https://translate.google.com/?sl=auto&tl=en&text=${encodeURIComponent(q)}&op=translate`); return { ok: true, message: 'AbrÃ­ el traductor con tu texto.' }; });
+ipcMain.handle('web:search', async (_e, query) => { const q = String(query || '').trim().slice(0, 300); if (!q) return { ok: false, message: 'Escribe qué quieres buscar.' }; await shell.openExternal(`https://www.google.com/search?q=${encodeURIComponent(q)}`); return { ok: true, message: `Abrí una búsqueda de ${q}.` }; });
+ipcMain.handle('web:translate', async (_e, text) => { const q = String(text || '').trim().slice(0, 1000); if (!q) return { ok: false, message: 'Escribe el texto que quieres traducir.' }; await shell.openExternal(`https://translate.google.com/?sl=auto&tl=en&text=${encodeURIComponent(q)}&op=translate`); return { ok: true, message: 'Abrí el traductor con tu texto.' }; });
 ipcMain.handle('documents:create', async (_e, input) => {
   const title = String(input?.title || 'Documento').replace(/[<>:"/\\|?*\x00-\x1F]/g, '').trim().slice(0, 100) || 'Documento';
   const ext = input?.type === 'markdown' ? '.md' : '.txt'; const body = String(input?.content || '').slice(0, 1000000);
   const { canceled, filePath } = await dialog.showSaveDialog(win, { title: 'Guardar documento', defaultPath: path.join(app.getPath('documents'), title + ext), filters: [{ name: ext === '.md' ? 'Markdown' : 'Texto', extensions: [ext.slice(1)] }] });
   if (canceled || !filePath) return { ok: false, canceled: true };
   fs.writeFileSync(filePath, body, 'utf8'); return { ok: true, path: filePath };
+});
+ipcMain.handle('folders:create', async (_e, name) => {
+  const folderName = String(name || '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '').trim().replace(/[. ]+$/g, '').slice(0, 80);
+  if (!folderName || folderName === '.' || folderName === '..') return { ok: false, message: 'Escribe un nombre válido para la carpeta.' };
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, { title: 'Elige dónde crear la carpeta', defaultPath: app.getPath('documents'), properties: ['openDirectory', 'createDirectory'] });
+  if (canceled || !filePaths?.[0]) return { ok: false, canceled: true };
+  const parent = resolveAllowedUserPath(filePaths[0]);
+  if (!parent || !fs.statSync(parent).isDirectory()) return { ok: false, message: 'Elige una carpeta personal de Windows.' };
+  const target = path.join(parent, folderName);
+  try { fs.mkdirSync(target); return { ok: true, path: target }; }
+  catch (error) { return { ok: false, message: error.code === 'EEXIST' ? 'Ya existe una carpeta con ese nombre.' : 'No pude crear la carpeta en esa ubicación.' }; }
 });
 ipcMain.handle('blender:export-model', async (_e, input) => {
   const safeName = value => String(value || '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '').trim().slice(0, 60) || 'Modelo';
@@ -455,8 +551,8 @@ ipcMain.handle('github:backup', async (_e, repo) => {
   if (!/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/.test(url)) return { ok: false, message: 'Pega el enlace HTTPS de un repositorio de GitHub.' };
   const dest = path.join(app.getPath('documents'), 'Jarvis-Backups'); fs.mkdirSync(dest, { recursive: true });
   const name = url.split('/').pop().replace(/\.git$/, ''); const folder = path.join(dest, name);
-  if (fs.existsSync(path.join(folder, '.git'))) return { ok: false, message: `Ya existe ${folder}. Para actualizarlo, Ã¡brelo con Git.` };
-  execFile('git', ['clone', '--depth', '1', url, folder], { windowsHide: true, timeout: 120000 }, (err) => { if (err && win) win.webContents.send('github:result', { ok: false, message: 'No se pudo clonar el repositorio. Revisa el enlace, Git y tu conexiÃ³n.' }); else if (win) win.webContents.send('github:result', { ok: true, message: `Respaldo descargado en ${folder}` }); });
-  return { ok: true, message: 'Iniciando descarga de respaldoâ€¦' };
+  if (fs.existsSync(path.join(folder, '.git'))) return { ok: false, message: `Ya existe ${folder}. Para actualizarlo, ábrelo con Git.` };
+  execFile('git', ['clone', '--depth', '1', url, folder], { windowsHide: true, timeout: 120000 }, (err) => { if (err && win) win.webContents.send('github:result', { ok: false, message: 'No se pudo clonar el repositorio. Revisa el enlace, Git y tu conexión.' }); else if (win) win.webContents.send('github:result', { ok: true, message: `Respaldo descargado en ${folder}` }); });
+  return { ok: true, message: 'Iniciando descarga de respaldo…' };
 });
 

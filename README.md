@@ -1,63 +1,40 @@
 # Jarvis 2.0
 
-Asistente de escritorio para Windows, en español, creado con Electron.
+Asistente de escritorio para Windows con Electron. Es un proyecto en desarrollo: a?n no cubre las 100 capacidades solicitadas.
 
-## Funciones incluidas
+## Funciones disponibles
 
-- Comandos por voz en el navegador integrado cuando Windows/Electron dispone de Speech Recognition: abrir aplicaciones, buscar archivos y navegar por la app.
-- Búsqueda por nombre en carpetas personales (Inicio, Documentos, Escritorio y Descargas); limita cada carpeta a 10 000 entradas.
-- Abrir aplicaciones frecuentes mediante un mapa de comandos seguro y ampliable.
-- Detectar y listar las aplicaciones registradas en el menú Inicio de Windows de cada computadora; permite abrirlas desde su identificador instalado.
-- Crear y editar imágenes localmente con un lienzo, dibujo, borrador, texto, deshacer, importación y exportación PNG.
-- Crear documentos TXT y Markdown.
-- Preferencias guardadas en el equipo: nombre, color, saludo y lectura en voz alta.
-- Pantalla de carga animada y saludo hablado al inicio.
-- Comandos de voz encadenados con “y luego”, por ejemplo abrir una app y después buscar un archivo.
-- Panel de sistema con uso aproximado de CPU y memoria, captura de pantalla, y apagado/reinicio con confirmación y cuenta regresiva cancelable.
-- Búsquedas web y traducción abren el navegador; no son respuestas de IA integradas.
-- Chat inteligente gratuito mediante Ollama y modelos locales instalados en el equipo; no usa clave API ni suscripción.\n- Editor de imágenes manual local con dibujo, texto, deshacer, importación y exportación PNG. La generación de imágenes por IA no está incluida.\n- Las conversaciones se procesan en Ollama en `127.0.0.1` y el historial permanece local.\n- Registro local de actividad para mostrar patrones de uso. El aprendizaje de hábitos es descriptivo por ahora; todavía no ejecuta aplicaciones de forma automática.
-- Descargar una copia local de un repositorio público de GitHub. El envío de cambios al repositorio requiere configurar Git y credenciales en el equipo.
-- Generar un instalador de Windows NSIS.
+- Perfiles locales con contrase?a protegida por hash; en la sesi?n administradora de Windows se usa el perfil del equipo sin pedir otro usuario.
+- Animaci?n de inicio, saludo hablado y selecci?n de voces del sistema. La disponibilidad de voz masculina depende de las voces instaladas en Windows.
+- Comandos por voz cuando Chromium ofrece reconocimiento y se concedi? permiso. La palabra de activaci?n Jarvis es opcional y queda desactivada por defecto; el reconocimiento continuo depende del motor de voz del sistema.
+- Conversaci?n con IA local mediante Ollama, historial, personalidad configurable y lectura de respuestas. Requiere instalar Ollama y descargar un modelo; no usa suscripci?n ni clave de pago.
+- Las ?rdenes por voz que no coinciden con una acci?n abren el chat local para responder, si hay un modelo seleccionado.
+- Lista y apertura de aplicaciones registradas en Inicio de Windows. Abrir Minecraft selecciona Minecraft Launcher si est? instalado.
+- Aprendizaje local de las aplicaciones abiertas. Si se activa en Preferencias, Jarvis abre hasta tres apps frecuentes al d?a despu?s de registrar cinco usos correctos por app.
+- B?squeda local en Inicio, Documentos, Escritorio y Descargas; creaci?n de documentos TXT/Markdown y carpetas; eliminaci?n de archivos individuales con confirmaci?n.
+- Panel de CPU y RAM, detecci?n de GPU y su motor con mayor actividad, control de volumen, control de brillo en pantallas compatibles, captura de pantalla y lista de ventanas abiertas.
+- Cierre de una aplicaci?n visible con confirmaci?n. Revisi?n local bajo demanda del firewall, Microsoft Defender, puertos en escucha e intentos fallidos recientes; no es vigilancia continua. Apagar o reiniciar Windows requiere confirmaci?n y tiene cuenta regresiva cancelable.
+- Editor de im?genes manual y generaci?n/edici?n local con ComfyUI. ComfyUI detecta el checkpoint SD 1.5 y los modelos Z Image Turbo/Qwen; la generaci?n Z Image agot? la memoria de esta PC, as? que no se considera validada aqu?.
+- Constructor 3D b?sico de primitivas con exportaci?n OBJ/MTL para continuar en Blender.
+- B?squeda web y traducci?n abren p?ginas del navegador; a?n no son resultados web integrados en el chat.
+- El respaldo de GitHub descarga un repositorio p?blico. No sube autom?ticamente el c?digo ni los datos personales de Jarvis.
 
-## Requisitos
+## Requisitos locales
 
-- Windows 10/11, Node.js LTS, npm y Git instalado y disponible en PATH.
-- Para voz, el reconocimiento de voz de Chromium y permiso de micrófono deben estar disponibles. Puedes usar las funciones por texto si no lo están.
+Windows 10/11, Node.js LTS, npm y Git. Para el chat, instala Ollama y un modelo local. Para im?genes IA, instala ComfyUI portable y modelos compatibles. Cada motor local puede requerir bastante espacio, RAM y VRAM.
 
-## Ejecutar desde el código
+Para ejecutar desde el c?digo: npm.cmd install y luego npm.cmd start. El lanzador elimina ELECTRON_RUN_AS_NODE solo del proceso de Electron para evitar que se ejecute como Node.
 
-```powershell
-npm.cmd install
-npm.cmd start
-```
+No crear una versi?n instalable nueva hasta terminar de corregir y revisar los problemas pendientes.
 
-## Crear el instalador
+## Capacidades a?n pendientes
 
-```powershell
-npm.cmd run dist
-```
+No est?n conectados el reconocimiento biom?trico de usuarios, an?lisis fiable de emociones, b?squedas en tiempo real respondidas dentro del chat, noticias, clima, correo, calendario, vigilancia continua y an?lisis avanzado de seguridad, c?maras/OCR/visi?n, dispositivos dom?sticos, robots, drones, simulaciones cient?ficas o coordinaci?n de agentes. Esas funciones requieren servicios, credenciales, permisos y/o hardware espec?ficos.
 
-No generar nuevas versiones instalables hasta terminar de corregir y revisar los problemas pendientes.
+La palabra de activaci?n depende del reconocimiento de voz de Chromium y puede requerir conexi?n seg?n el motor instalado. La identificaci?n facial y el monitoreo continuo no est?n implementados.
 
+## Privacidad y alcance
 
-Al iniciar, Jarvis muestra una pantalla animada de carga y, si el saludo y la voz están activados, dice: «Hola, estoy listo para ayudarte».
+Los perfiles, preferencias e historial se guardan en los datos locales de la aplicaci?n. Ollama y ComfyUI procesan localmente cuando est?n instalados. El uso del reconocimiento de voz depende del proveedor del motor de Windows/Chromium. El bot?n de GitHub descarga repositorios; no sincroniza las conversaciones ni publica el perfil.
 
-## Respaldo con GitHub
-
-En Personalización, pega la URL HTTPS de un repositorio GitHub. Jarvis descargará el repositorio en `Documentos/Jarvis-Backups`. Para repositorios privados, configura previamente credenciales de Git. Esto no es una carga automática de cambios: primero habrá que inicializar y configurar un repositorio de respaldo de los datos que quieras sincronizar.
-
-## Privacidad y límites
-
-El historial y las preferencias se guardan en el directorio local de datos de la app; la búsqueda recorre carpetas personales localmente. El chat requiere instalar Ollama y descargar un modelo local compatible. Jarvis se conecta solo a `127.0.0.1:11434`; no envía mensajes a APIs de IA en la nube ni requiere pagos recurrentes. Los modelos usan almacenamiento, memoria y capacidad de la computadora, y sus licencias dependen de cada modelo. La generación de imágenes con IA no está conectada; el editor manual sí funciona localmente. Jarvis no ejecuta directamente las respuestas del modelo en Windows.
-
-## Estado de la lista de capacidades
-
-Esta versión implementa una base de escritorio, no las 100 capacidades completas. Están disponibles de forma básica: chat de IA local mediante Ollama, lectura de respuestas mediante la voz del sistema (2), preferencias visuales (13, parcial), comandos encadenados sencillos (7 y 8, parcial), búsqueda de archivos (23), documentos TXT/Markdown (24), métricas CPU/RAM (29, aproximadas), búsqueda web externa (31), abrir páginas vía navegador (37, indirecto), captura de pantalla (22), apagado/reinicio confirmados (17) y clonación GitHub (63, solo descarga).
-
-La conversación general requiere Ollama instalado localmente y un modelo descargado. El wake word (15), reconocimiento de personas/emociones (4 y 12), correo/calendario (33–35 y 40), análisis de seguridad, cámaras, domótica, robots/drones y agentes continuos necesitan servicios, credenciales, hardware y permisos que aún no están conectados. No generar una nueva versión instalable hasta resolver los problemas pendientes y completar la revisión del proyecto.
-
-El editor de imágenes incluido es local y no genera imágenes mediante IA. La detección de aplicaciones utiliza `Get-StartApps` de Windows; muestra las apps registradas en el menú Inicio y depende de PowerShell y del registro de lanzamiento que Windows exponga.
-
-## Taller 3D para Blender
-
-Jarvis incluye un constructor básico de escenas con primitivas (cubo, esfera, cilindro, cono y toroide), vista previa isométrica, posición, escala, giro y color. Exporta un archivo OBJ y su material MTL para importar en Blender. La edición avanzada, rigging y preparación de avatares VRChat siguen haciéndose desde Blender; Jarvis no instala Blender ni crea un instalador nuevo.
+La lista de 100 funciones es un objetivo de desarrollo, no una afirmaci?n de que todas est?n disponibles. Algunas dependen de hardware, cuentas, permisos o servicios que no est?n presentes en este proyecto.
