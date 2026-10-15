@@ -34,7 +34,7 @@ app.whenReady().then(() => { createWindow(); app.on('activate', () => { if (!Bro
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 
 ipcMain.handle('settings:get', () => publicData(readData()));
-ipcMain.handle('shell:open-external', (_e, url) => /^https:\/\/ollama\.com\/download\/?$/.test(String(url)) ? shell.openExternal(url) : false);
+ipcMain.handle('shell:open-external', (_e, url) => /^https:\/\/ollama\.com\/download\/?$/.test(String(url)) || /^https:\/\/docs\.comfy\.org\/(?:get_started\/download|)$/.test(String(url)) ? shell.openExternal(url) : false);
 ipcMain.handle('settings:save', (_e, value) => { const d = readData(); d.settings = { ...d.settings, ...value }; writeData(d); return d.settings; });
 ipcMain.handle('usage:record', (_e, label) => { const d = readData(); const key = String(label).trim().toLowerCase(); if (key) d.usage[key] = (d.usage[key] || 0) + 1; d.history.unshift({ label: String(label), at: new Date().toISOString() }); d.history = d.history.slice(0, 40); writeData(d); return publicData(d); });
 ipcMain.handle('ai:models', async () => {
@@ -107,6 +107,93 @@ ipcMain.handle('apps:list', () => new Promise(resolve => {
     catch { resolve([]); }
   });
 }));
+const imageAiUrl = 'http://127.0.0.1:8188';
+function imageAiError(error) {
+  if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return 'ComfyUI tardó demasiado en responder. Revisa su ventana y vuelve a intentarlo.';
+  return 'ComfyUI no está disponible. Inicia ComfyUI en esta PC para generar imágenes localmente.';
+}
+async function imageAiModels() {
+  const response = await net.fetch(`${imageAiUrl}/object_info/CheckpointLoaderSimple`, { signal: AbortSignal.timeout(5000) });
+  if (!response.ok) throw new Error('No se pudo leer la lista de modelos.');
+  const info = await response.json();
+  const choices = info?.CheckpointLoaderSimple?.input?.required?.ckpt_name?.[0];
+  return Array.isArray(choices) ? choices.filter(x => typeof x === 'string').slice(0, 100) : [];
+}
+async function imageAiStatus() {
+  try {
+    const models = await imageAiModels();
+    return { ok: true, models, message: models.length ? 'IA de imágenes local lista. Las imágenes se procesan en esta PC.' : 'ComfyUI está iniciado, pero falta un modelo de imagen compatible.' };
+  } catch { return { ok: false, models: [], message: imageAiError() }; }
+}
+async function imageAiUpload(dataUrl) {
+  if (typeof dataUrl !== 'string' || dataUrl.length > 45 * 1024 * 1024) throw new Error('La imagen supera el límite permitido de 25 MB.');
+  const match = dataUrl.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) throw new Error('Abre una imagen PNG, JPG o WebP antes de pedir una modificación.');
+  const bytes = Buffer.from(match[2], 'base64');
+  if (bytes.length > 25 * 1024 * 1024) throw new Error('La imagen supera el límite permitido de 25 MB.');
+  const mime = match[1] === 'jpeg' ? 'image/jpeg' : `image/${match[1]}`;
+  const form = new FormData(); form.append('image', new Blob([bytes], { type: mime }), `jarvis-edit.${match[1]}`); form.append('type', 'input'); form.append('overwrite', 'true');
+  const response = await net.fetch(`${imageAiUrl}/upload/image`, { method: 'POST', body: form, signal: AbortSignal.timeout(30000) });
+  if (!response.ok) throw new Error('ComfyUI no pudo cargar la imagen que quieres modificar.');
+  return response.json();
+}
+async function runImageAi({ prompt, model, width, height, steps, inputImage, denoise }) {
+  const text = String(prompt || '').trim().slice(0, 2000);
+  if (!text) return { ok: false, message: 'Escribe una descripción para la imagen.' };
+  try {
+    const models = await imageAiModels();
+    if (!models.length) return { ok: false, message: 'ComfyUI está iniciado, pero no encuentra modelos de imagen compatibles.' };
+    const selectedModel = models.includes(model) ? model : models[0];
+    const w = Math.max(512, Math.min(1024, Math.round((Number(width) || 768) / 64) * 64));
+    const h = Math.max(512, Math.min(1024, Math.round((Number(height) || 768) / 64) * 64));
+    const n = Math.max(10, Math.min(40, Math.round(Number(steps) || 20)));
+    let source = null;
+    if (inputImage) source = await imageAiUpload(inputImage);
+    const workflow = {
+      '1': { class_type: 'CheckpointLoaderSimple', inputs: { ckpt_name: selectedModel } },
+      '2': { class_type: 'CLIPTextEncode', inputs: { text, clip: ['1', 1] } },
+      '3': { class_type: 'CLIPTextEncode', inputs: { text: 'low quality, blurry, distorted, artifacts', clip: ['1', 1] } },
+      '4': source
+        ? { class_type: 'LoadImage', inputs: { image: source.name } }
+        : { class_type: 'EmptyLatentImage', inputs: { width: w, height: h, batch_size: 1 } },
+      '5': source
+        ? { class_type: 'ImageScale', inputs: { image: ['4', 0], upscale_method: 'lanczos', width: w, height: h, crop: 'center' } }
+        : null,
+      '6': source
+        ? { class_type: 'VAEEncode', inputs: { pixels: ['5', 0], vae: ['1', 2] } }
+        : null,
+      '7': { class_type: 'KSampler', inputs: { seed: Math.floor(Math.random() * 2147483647), steps: n, cfg: 7, sampler_name: 'euler', scheduler: 'normal', denoise: source ? Math.max(0.35, Math.min(0.85, Number(denoise) || 0.65)) : 1, model: ['1', 0], positive: ['2', 0], negative: ['3', 0], latent_image: source ? ['6', 0] : ['4', 0] } },
+      '8': { class_type: 'VAEDecode', inputs: { samples: ['7', 0], vae: ['1', 2] } },
+      '9': { class_type: 'SaveImage', inputs: { filename_prefix: 'Jarvis', images: ['8', 0] } }
+    };
+    if (!source) { delete workflow['5']; delete workflow['6']; }
+    const queued = await net.fetch(`${imageAiUrl}/prompt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: workflow }), signal: AbortSignal.timeout(30000) });
+    if (!queued.ok) return { ok: false, message: `ComfyUI rechazó la solicitud (${queued.status}). Comprueba que el modelo sea compatible.` };
+    const { prompt_id: promptId } = await queued.json();
+    if (!promptId) return { ok: false, message: 'ComfyUI no confirmó la generación.' };
+    const deadline = Date.now() + 360000;
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const historyResponse = await net.fetch(`${imageAiUrl}/history/${encodeURIComponent(promptId)}`, { signal: AbortSignal.timeout(10000) });
+      if (!historyResponse.ok) continue;
+      const history = await historyResponse.json();
+      const job = history[promptId];
+      const image = Object.values(job?.outputs || {}).flatMap(output => output.images || [])[0];
+      if (image?.filename) {
+        const query = new URLSearchParams({ filename: image.filename, subfolder: image.subfolder || '', type: image.type || 'output' });
+        const result = await net.fetch(`${imageAiUrl}/view?${query}` , { signal: AbortSignal.timeout(30000) });
+        if (!result.ok) return { ok: false, message: 'La imagen se generó, pero no pude descargar el resultado desde ComfyUI.' };
+        const dataUrl = `data:image/png;base64,${Buffer.from(await result.arrayBuffer()).toString('base64')}`;
+        return { ok: true, dataUrl, model: selectedModel };
+      }
+      if (job?.status?.status_str === 'error') return { ok: false, message: 'ComfyUI encontró un error al generar. Revisa que el modelo y sus nodos estén instalados.' };
+    }
+    return { ok: false, message: 'La generación superó los seis minutos. Puedes revisar el estado en ComfyUI.' };
+  } catch (error) { return { ok: false, message: error.message && !/fetch|socket|ECONNREFUSED/i.test(error.message) ? error.message : imageAiError(error) }; }
+}
+ipcMain.handle('images:ai-status', imageAiStatus);
+ipcMain.handle('images:ai-generate', (_e, options) => runImageAi(options || {}));
+ipcMain.handle('images:ai-edit', (_e, options) => runImageAi({ ...(options || {}), inputImage: options?.inputImage }));
 ipcMain.handle('images:open', async () => {
   const result = await dialog.showOpenDialog(win, { title: 'Abrir imagen', properties: ['openFile'], filters: [{ name: 'ImÃ¡genes', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] }] });
   if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true };
