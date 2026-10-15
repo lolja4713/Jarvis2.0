@@ -16,7 +16,15 @@ function readData() {
   catch { return { settings: {}, usage: {}, favorites: [], history: [] }; }
 }
 function writeData(value) { fs.mkdirSync(userDir, { recursive: true }); fs.writeFileSync(dataFile, JSON.stringify(value, null, 2), 'utf8'); }
-function publicData(d) { return { settings: d.settings || {}, usage: d.usage || {}, favorites: d.favorites || [], history: d.history || [], ai: { configured: true, messages: d.aiMessages || [] } }; }
+function legacyAiHistory(messages) {
+  const result = [];
+  for (let i = 0; i < messages.length - 1; i++) {
+    if (messages[i]?.role === 'user' && messages[i + 1]?.role === 'assistant') result.push({ question: String(messages[i].content || ''), answer: String(messages[i + 1].content || ''), at: new Date().toISOString() });
+  }
+  return result;
+}
+function getAiHistory(d) { return Array.isArray(d.aiHistory) ? d.aiHistory.filter(item => item && typeof item.question === 'string' && typeof item.answer === 'string') : legacyAiHistory(Array.isArray(d.aiMessages) ? d.aiMessages : []); }
+function publicData(d) { return { settings: d.settings || {}, usage: d.usage || {}, favorites: d.favorites || [], history: d.history || [], ai: { configured: true, messages: d.aiMessages || [], history: getAiHistory(d) } }; }
 
 function createWindow() {
   win = new BrowserWindow({ width: 1200, height: 800, minWidth: 900, minHeight: 620, backgroundColor: '#080b12', title: 'Jarvis 2.0', webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
@@ -34,7 +42,7 @@ ipcMain.handle('ai:models', async () => {
   catch { return { ok: false, models: [], message: 'Ollama no estÃ¡ disponible. InstÃ¡lalo e inicia un modelo para usar IA gratis y local.' }; }
 });
 ipcMain.handle('ai:save-config', (_e, config) => { const d = readData(); d.settings = { ...d.settings, aiModel: String(config?.model || '').slice(0, 120), personality: ['amable', 'profesional', 'divertida'].includes(config?.personality) ? config.personality : 'amable' }; writeData(d); return { ...d.settings }; });
-ipcMain.handle('ai:clear-chat', () => { const d = readData(); d.aiMessages = []; writeData(d); return []; });
+ipcMain.handle('ai:clear-chat', () => { const d = readData(); d.aiHistory = getAiHistory(d); d.aiMessages = []; writeData(d); return []; });
 ipcMain.handle('ai:chat', async (_e, prompt) => {
   const text = String(prompt || '').trim().slice(0, 6000); if (!text) return { ok: false, message: 'Escribe una pregunta o instrucciÃ³n.' };
   const d = readData(); const model = String(d.settings.aiModel || '').slice(0, 120);
@@ -47,7 +55,10 @@ ipcMain.handle('ai:chat', async (_e, prompt) => {
   if (!response.ok) return { ok: false, message: response.status === 404 ? 'No encuentro ese modelo. Actualiza la lista de modelos locales.' : `Ollama respondiÃ³ con error ${response.status}.` };
   let result; try { result = await response.json(); } catch { return { ok: false, message: 'No se pudo leer la respuesta del modelo local.' }; }
   const answer = String(result.message?.content || '').trim(); if (!answer) return { ok: false, message: 'El modelo local no devolviÃ³ texto esta vez.' };
-  d.aiMessages = [...history, { role: 'user', content: text }, { role: 'assistant', content: answer }].slice(-40); writeData(d); return { ok: true, answer, messages: d.aiMessages };
+  const askedAt = new Date().toISOString(); const aiHistory = getAiHistory(d);
+  d.aiMessages = [...history, { role: 'user', content: text }, { role: 'assistant', content: answer }].slice(-40);
+  d.aiHistory = [...aiHistory, { question: text, answer, at: askedAt }].slice(-100);
+  writeData(d); return { ok: true, answer, messages: d.aiMessages, history: d.aiHistory };
 });ipcMain.handle('files:search', async (_e, query) => {
   const needle = String(query || '').trim().toLowerCase(); if (!needle) return [];
   const found = []; const seen = new Set(); const roots = [...new Set(allowedFolders)];
@@ -162,11 +173,7 @@ ipcMain.handle('blender:export-model', async (_e, input) => {
     const label = safeName(object.name || `${type}_${objectIndex + 1}`).replace(/\s+/g, '_'); objLines.push(`o ${label}`, `usemtl ${mat}`, 's 1');
     const ax=rx*Math.PI/180, ay=ry*Math.PI/180, az=rz*Math.PI/180;
     for(const [vx,vy,vz] of vertices){let px=vx*sx, py=vy*sy, pz=vz*sz; let qy=py*Math.cos(ax)-pz*Math.sin(ax), qz=py*Math.sin(ax)+pz*Math.cos(ax); py=qy;pz=qz;let qx=px*Math.cos(ay)+pz*Math.sin(ay);qz=-px*Math.sin(ay)+pz*Math.cos(ay);px=qx;pz=qz;qx=px*Math.cos(az)-py*Math.sin(az);qy=px*Math.sin(az)+py*Math.cos(az);px=qx;py=qy;objLines.push(`v ${(px+x).toFixed(6)} ${(pz+y).toFixed(6)} ${(py+z).toFixed(6)}`);}
-<<<<<<< HEAD
     for(const face of faces)objLines.push('f '+face.map(index=>index+vertexOffset-1).join(' ')); vertexOffset+=vertices.length;
-=======
-    for(const face of faces)objLines.push('f '+face.map(index=>index+vertexOffset).join(' ')); vertexOffset+=vertices.length;
->>>>>>> daf2d75b1b3ef4a22cc9962ae7cac6024f6d38b1
   };
   const cube=()=>({v:[[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]],f:[[1,4,3,2],[5,6,7,8],[1,2,6,5],[2,3,7,6],[3,4,8,7],[4,1,5,8]]});
   const radial=(type)=>{const n=20,v=[],f=[];if(type==='sphere'){const rings=10;for(let j=0;j<=rings;j++){const p=Math.PI*j/rings;for(let i=0;i<n;i++){const t=2*Math.PI*i/n;v.push([Math.sin(p)*Math.cos(t),Math.cos(p),Math.sin(p)*Math.sin(t)]);}}for(let j=0;j<rings;j++)for(let i=0;i<n;i++){const a=j*n+i+1,b=j*n+(i+1)%n+1,c=(j+1)*n+(i+1)%n+1,d=(j+1)*n+i+1;f.push([a,b,c,d]);}}else if(type==='torus'){const m=10,R=.72,r=.28;for(let j=0;j<m;j++)for(let i=0;i<n;i++){const u=2*Math.PI*i/n,t=2*Math.PI*j/m;v.push([(R+r*Math.cos(t))*Math.cos(u),r*Math.sin(t),(R+r*Math.cos(t))*Math.sin(u)]);}for(let j=0;j<m;j++)for(let i=0;i<n;i++){const a=j*n+i+1,b=j*n+(i+1)%n+1,c=((j+1)%m)*n+(i+1)%n+1,d=((j+1)%m)*n+i+1;f.push([a,b,c,d]);}}else{for(let i=0;i<n;i++){const t=2*Math.PI*i/n;v.push([Math.cos(t),-1,Math.sin(t)]);}if(type==='cylinder'){for(let i=0;i<n;i++){const t=2*Math.PI*i/n;v.push([Math.cos(t),1,Math.sin(t)]);}v.push([0,-1,0],[0,1,0]);}else v.push([0,1,0],[0,-1,0]);for(let i=0;i<n;i++){const next=(i+1)%n+1;if(type==='cylinder'){f.push([i+1,next,n+next,n+i+1]);f.push([n*2+1,next,i+1]);f.push([n*2+2,n+i+1,n+next]);}else{f.push([i+1,next,n+1]);f.push([n+2,next,i+1]);}}}return{v,f};};
