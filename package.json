@@ -1,6 +1,6 @@
 {
   "name": "jarvis-2-desktop",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Asistente de escritorio personalizable en español",
   "main": "src/main.js",
   "author": "Jarvis 2.0",
