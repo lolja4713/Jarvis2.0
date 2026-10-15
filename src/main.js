@@ -30,7 +30,7 @@ ipcMain.handle('shell:open-external', (_e, url) => /^https:\/\/ollama\.com\/down
 ipcMain.handle('settings:save', (_e, value) => { const d = readData(); d.settings = { ...d.settings, ...value }; writeData(d); return d.settings; });
 ipcMain.handle('usage:record', (_e, label) => { const d = readData(); const key = String(label).trim().toLowerCase(); if (key) d.usage[key] = (d.usage[key] || 0) + 1; d.history.unshift({ label: String(label), at: new Date().toISOString() }); d.history = d.history.slice(0, 40); writeData(d); return publicData(d); });
 ipcMain.handle('ai:models', async () => {
-  try { const response = await net.fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(5000) }); if (!response.ok) return { ok: false, models: [], message: 'Ollama no estÃ¡ iniciado. InÃ­cialo para usar IA local.' }; const result = await response.json(); return { ok: true, models: (result.models || []).map(m => m.name).filter(Boolean), message: 'IA local lista. Tus mensajes no salen de este equipo.' }; }
+  try { const response = await net.fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(5000) }); if (!response.ok) return { ok: false, models: [], message: 'Ollama no estÃ¡ iniciado. InÃ­cialo para usar IA local.' }; const result = await response.json(); const models = (result.models || []).map(m => m.name).filter(Boolean); return { ok: true, models, message: models.length ? 'IA local lista. Tus mensajes no salen de este equipo.' : 'Ollama está iniciado, pero todavía no hay modelos descargados.' }; }
   catch { return { ok: false, models: [], message: 'Ollama no estÃ¡ disponible. InstÃ¡lalo e inicia un modelo para usar IA gratis y local.' }; }
 });
 ipcMain.handle('ai:save-config', (_e, config) => { const d = readData(); d.settings = { ...d.settings, aiModel: String(config?.model || '').slice(0, 120), personality: ['amable', 'profesional', 'divertida'].includes(config?.personality) ? config.personality : 'amable' }; writeData(d); return { ...d.settings }; });
@@ -50,7 +50,7 @@ ipcMain.handle('ai:chat', async (_e, prompt) => {
   d.aiMessages = [...history, { role: 'user', content: text }, { role: 'assistant', content: answer }].slice(-40); writeData(d); return { ok: true, answer, messages: d.aiMessages };
 });ipcMain.handle('files:search', async (_e, query) => {
   const needle = String(query || '').trim().toLowerCase(); if (!needle) return [];
-  const found = []; const roots = [...new Set(allowedFolders)];
+  const found = []; const seen = new Set(); const roots = [...new Set(allowedFolders)];
   for (const root of roots) {
     const stack = [root]; let scanned = 0;
     while (stack.length && scanned < 10000 && found.length < 60) {
@@ -59,7 +59,8 @@ ipcMain.handle('ai:chat', async (_e, prompt) => {
       for (const entry of entries) {
         scanned++; if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'AppData') continue;
         const full = path.join(dir, entry.name);
-        if (entry.name.toLowerCase().includes(needle)) found.push({ name: entry.name, path: full, directory: entry.isDirectory() });
+        const normalized = path.resolve(full).toLowerCase();
+        if (entry.name.toLowerCase().includes(needle) && !seen.has(normalized)) { seen.add(normalized); found.push({ name: entry.name, path: full, directory: entry.isDirectory() }); }
         if (entry.isDirectory() && stack.length < 200) stack.push(full);
         if (found.length >= 60 || scanned >= 10000) break;
       }
@@ -160,16 +161,16 @@ ipcMain.handle('blender:export-model', async (_e, input) => {
     const mat = `jarvis_mat_${objectIndex + 1}`; mtlLines.push(`newmtl ${mat}`, 'Ka 0.100 0.100 0.100', 'Kd ' + [0,2,4].map(i => (parseInt(color.slice(i,i+2),16)/255).toFixed(4)).join(' '), 'Ks 0.250 0.250 0.250', 'Ns 32', '');
     const label = safeName(object.name || `${type}_${objectIndex + 1}`).replace(/\s+/g, '_'); objLines.push(`o ${label}`, `usemtl ${mat}`, 's 1');
     const ax=rx*Math.PI/180, ay=ry*Math.PI/180, az=rz*Math.PI/180;
-    for(const [vx,vy,vz] of vertices){let px=vx*sx, py=vy*sy, pz=vz*sz; let qy=py*Math.cos(ax)-pz*Math.sin(ax), qz=py*Math.sin(ax)+pz*Math.cos(ax); py=qy;pz=qz;let qx=px*Math.cos(ay)+pz*Math.sin(ay);qz=-px*Math.sin(ay)+pz*Math.cos(ay);px=qx;pz=qz;qx=px*Math.cos(az)-py*Math.sin(az);qy=px*Math.sin(az)+py*Math.cos(az);px=qx;py=qy;objLines.push(`v ${(px+x).toFixed(6)} ${(pz+z).toFixed(6)} ${(py).toFixed(6)}`);}
-    for(const face of faces)objLines.push('f '+face.map(index=>index+vertexOffset).join(' ')); vertexOffset+=vertices.length;
+    for(const [vx,vy,vz] of vertices){let px=vx*sx, py=vy*sy, pz=vz*sz; let qy=py*Math.cos(ax)-pz*Math.sin(ax), qz=py*Math.sin(ax)+pz*Math.cos(ax); py=qy;pz=qz;let qx=px*Math.cos(ay)+pz*Math.sin(ay);qz=-px*Math.sin(ay)+pz*Math.cos(ay);px=qx;pz=qz;qx=px*Math.cos(az)-py*Math.sin(az);qy=px*Math.sin(az)+py*Math.cos(az);px=qx;py=qy;objLines.push(`v ${(px+x).toFixed(6)} ${(pz+y).toFixed(6)} ${(py+z).toFixed(6)}`);}
+    for(const face of faces)objLines.push('f '+face.map(index=>index+vertexOffset-1).join(' ')); vertexOffset+=vertices.length;
   };
   const cube=()=>({v:[[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]],f:[[1,4,3,2],[5,6,7,8],[1,2,6,5],[2,3,7,6],[3,4,8,7],[4,1,5,8]]});
-  const radial=(type)=>{const n=20,v=[],f=[];if(type==='sphere'){const rings=10;for(let j=0;j<=rings;j++){const p=Math.PI*j/rings;for(let i=0;i<n;i++){const t=2*Math.PI*i/n;v.push([Math.sin(p)*Math.cos(t),Math.cos(p),Math.sin(p)*Math.sin(t)]);}}for(let j=0;j<rings;j++)for(let i=0;i<n;i++){const a=j*n+i+1,b=j*n+(i+1)%n+1,c=(j+1)*n+(i+1)%n+1,d=(j+1)*n+i+1;f.push([a,b,c,d]);}}else if(type==='torus'){const m=10,R=.72,r=.28;for(let j=0;j<m;j++)for(let i=0;i<n;i++){const u=2*Math.PI*i/n,t=2*Math.PI*j/m;v.push([(R+r*Math.cos(t))*Math.cos(u),r*Math.sin(t),(R+r*Math.cos(t))*Math.sin(u)]);}for(let j=0;j<m;j++)for(let i=0;i<n;i++){const a=j*n+i+1,b=j*n+(i+1)%n+1,c=((j+1)%m)*n+(i+1)%n+1,d=((j+1)%m)*n+i+1;f.push([a,b,c,d]);}}else{for(let i=0;i<n;i++){const t=2*Math.PI*i/n;v.push([Math.cos(t),-1,Math.sin(t)]);}if(type==='cylinder')for(let i=0;i<n;i++){const t=2*Math.PI*i/n;v.push([Math.cos(t),1,Math.sin(t)]);}else v.push([0,1,0]);for(let i=0;i<n;i++){const next=(i+1)%n+1;if(type==='cylinder'){f.push([i+1,next,n+next,n+i+1]);f.push([n*2+1,next,i+1]);f.push([n*2+2,n+i+1,n+next]);}else{f.push([i+1,next,n+1]);f.push([n+2,next,i+1]);}}}return{v,f};};
+  const radial=(type)=>{const n=20,v=[],f=[];if(type==='sphere'){const rings=10;for(let j=0;j<=rings;j++){const p=Math.PI*j/rings;for(let i=0;i<n;i++){const t=2*Math.PI*i/n;v.push([Math.sin(p)*Math.cos(t),Math.cos(p),Math.sin(p)*Math.sin(t)]);}}for(let j=0;j<rings;j++)for(let i=0;i<n;i++){const a=j*n+i+1,b=j*n+(i+1)%n+1,c=(j+1)*n+(i+1)%n+1,d=(j+1)*n+i+1;f.push([a,b,c,d]);}}else if(type==='torus'){const m=10,R=.72,r=.28;for(let j=0;j<m;j++)for(let i=0;i<n;i++){const u=2*Math.PI*i/n,t=2*Math.PI*j/m;v.push([(R+r*Math.cos(t))*Math.cos(u),r*Math.sin(t),(R+r*Math.cos(t))*Math.sin(u)]);}for(let j=0;j<m;j++)for(let i=0;i<n;i++){const a=j*n+i+1,b=j*n+(i+1)%n+1,c=((j+1)%m)*n+(i+1)%n+1,d=((j+1)%m)*n+i+1;f.push([a,b,c,d]);}}else{for(let i=0;i<n;i++){const t=2*Math.PI*i/n;v.push([Math.cos(t),-1,Math.sin(t)]);}if(type==='cylinder'){for(let i=0;i<n;i++){const t=2*Math.PI*i/n;v.push([Math.cos(t),1,Math.sin(t)]);}v.push([0,-1,0],[0,1,0]);}else v.push([0,1,0],[0,-1,0]);for(let i=0;i<n;i++){const next=(i+1)%n+1;if(type==='cylinder'){f.push([i+1,next,n+next,n+i+1]);f.push([n*2+1,next,i+1]);f.push([n*2+2,n+i+1,n+next]);}else{f.push([i+1,next,n+1]);f.push([n+2,next,i+1]);}}}return{v,f};};
   try { objects.forEach((object,index)=>{const shape=allowed.has(object.type)?object.type:'cube';const mesh=shape==='cube'?cube():radial(shape);pushMesh(object,index,mesh.v,mesh.f);}); }
   catch(error){return {ok:false,message:error.message||'No pude preparar la geometría.'};}
   const { canceled, filePath } = await dialog.showSaveDialog(win,{title:'Exportar modelo 3D para Blender',defaultPath:path.join(safeAppPath('documents')||app.getPath('home'),`${safeName(input?.name)}.obj`),filters:[{name:'Modelo 3D OBJ',extensions:['obj']}]});
   if(canceled||!filePath)return {ok:false,canceled:true};
-  try { const mtlPath=path.join(path.dirname(filePath),path.basename(filePath,path.extname(filePath))+'.mtl'); fs.writeFileSync(mtlPath,mtlLines.join('\n'),'utf8'); fs.writeFileSync(filePath,objLines.join('\n'),'utf8'); return {ok:true,path:filePath,materialPath:mtlPath}; }
+  try { const mtlName=path.basename(filePath,path.extname(filePath)).replace(/\s+/g,'_')+'.mtl'; const mtlPath=path.join(path.dirname(filePath),mtlName); objLines[1]=`mtllib ${mtlName}`; fs.writeFileSync(mtlPath,mtlLines.join('\n'),'utf8'); fs.writeFileSync(filePath,objLines.join('\n'),'utf8'); return {ok:true,path:filePath,materialPath:mtlPath}; }
   catch{return {ok:false,message:'No se pudo exportar el modelo 3D.'};}
 });
 ipcMain.handle('github:backup', async (_e, repo) => {

@@ -1,0 +1,12 @@
+# Materiales de Jarvis-QA-Model
+newmtl jarvis_mat_1
+Ka 0.100 0.100 0.100
+Kd 0.3216 0.8510 1.0000
+Ks 0.250 0.250 0.250
+Ns 32
+
+newmtl jarvis_mat_2
+Ka 0.100 0.100 0.100
+Kd 1.0000 0.5020 0.3216
+Ks 0.250 0.250 0.250
+Ns 32
